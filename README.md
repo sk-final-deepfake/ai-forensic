@@ -2,34 +2,61 @@
 
 ForenShield AI의 Python FastAPI 기반 AI 서버이다.
 
-Sprint 1에서는 실제 딥페이크 탐지 모델 없이 `GET /health`, `POST /ai/analyze` Mock API를 제공한다.
+현재 서버는 Spring Boot 백엔드 연동 테스트를 위한 Mock 분석 API를 제공한다.
 
-## 가상환경 생성
+김민희 AI 서버 작업 정리는 아래 문서에 정리되어 있다.
+
+```text
+docs/KIMMINHEE_AI_SERVER_WORK_SUMMARY.md
+```
+
+## 실행 방법
+
+프로젝트 위치로 이동한다.
+
+```bash
+cd /Users/kimmini/sk-final-deepfake/ai-forensic
+```
+
+Python 가상환경을 생성한다.
 
 ```bash
 python3 -m venv .venv
+```
+
+가상환경을 활성화한다.
+
+```bash
 source .venv/bin/activate
 ```
 
-## 패키지 설치
+패키지를 설치한다.
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## 환경변수 설정
+환경변수 예시 파일을 복사한다.
 
 ```bash
 cp .env.example .env
 ```
 
-## 서버 실행
+FastAPI 서버를 실행한다.
 
 ```bash
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --port 8000
 ```
 
-## Health API 테스트
+브라우저에서 Swagger UI를 확인한다.
+
+```text
+http://localhost:8000/docs
+```
+
+## API 테스트
+
+`/health` 상태 확인 API를 테스트한다.
 
 ```bash
 curl http://localhost:8000/health
@@ -44,7 +71,7 @@ curl http://localhost:8000/health
 }
 ```
 
-## Mock Analyze API 테스트
+`/ai/analyze` Mock 분석 API를 테스트한다.
 
 ```bash
 curl -X POST http://localhost:8000/ai/analyze \
@@ -79,22 +106,41 @@ curl -X POST http://localhost:8000/ai/analyze \
 }
 ```
 
-## Sprint 1 범위
+## Docker 실행
 
-- FastAPI 기본 서버 구조
-- `GET /health`
-- `POST /ai/analyze` Mock API
-- Request/Response 스키마
-- SHA-256 유틸 함수
+이미지를 빌드한다.
 
-## Sprint 1 제외 범위
+```bash
+docker build -t ai-forensic .
+```
 
-- 실제 탐지 모델
-- PyTorch 모델 로딩
-- OpenCV/Librosa 분석
-- STT
-- 화자 분리 및 화자 검증
-- RabbitMQ Consumer
-- S3 다운로드 실구현
-- Result API 호출 실구현
-- GPU 추론
+컨테이너를 실행한다.
+
+```bash
+docker run -p 8000:8000 ai-forensic
+```
+
+실행 후 동일하게 Swagger UI와 API를 확인한다.
+
+```text
+http://localhost:8000/docs
+GET /health
+POST /ai/analyze
+```
+
+## 테스트했던 실행 방식
+
+로컬 검증에서는 다음 순서로 확인했다.
+
+```text
+1. python3 --version
+2. python3 -m venv .venv
+3. source .venv/bin/activate
+4. pip install -r requirements.txt
+5. uvicorn app.main:app --port 8000
+6. http://localhost:8000/docs 확인
+7. GET /health 호출
+8. POST /ai/analyze 호출
+```
+
+`uvicorn app.main:app --reload --port 8000`은 로컬 권한 문제로 실패해서, 실제 API 검증은 `--reload` 없이 진행했다.

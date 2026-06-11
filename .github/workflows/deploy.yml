@@ -1,4 +1,4 @@
-name: AI FastAPI Deploy (ECR + Argo CD GitOps)
+name: AI FastAPI Deploy (ECR + Argo CD GitOps!!)
 
 on:
   push:

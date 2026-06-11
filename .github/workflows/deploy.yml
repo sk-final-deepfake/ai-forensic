@@ -1,0 +1,87 @@
+name: AI FastAPI Deploy (ECR + Argo CD GitOps)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REPOSITORY: forenshield-ai-fastapi
+  EKS_CLUSTER: forenshield
+  K8S_NAMESPACE: forenshield
+  INFRA_REPO: sk-final-deepfake/infra-forensic
+  DEPLOYMENT_PATH: config/k8s/ai-fastapi/deployment.yaml
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ai-forensic
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies (smoke)
+        run: pip install -r requirements.txt
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker build \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+            .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      - name: Checkout infra-forensic
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.INFRA_REPO }}
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
+          path: infra
+
+      - name: Update image tag in deployment manifest
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          NEW_IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          FILE="infra/$DEPLOYMENT_PATH"
+          sed -i "s|image: .*forenshield-ai-fastapi:.*|image: $NEW_IMAGE|" "$FILE"
+          grep "image:" "$FILE"
+
+      - name: Push to infra-forensic (triggers Argo CD)
+        working-directory: infra
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add $DEPLOYMENT_PATH
+          git diff --staged --quiet && echo "No manifest change" && exit 0
+          git commit -m "ci: ai-fastapi image → ${{ github.sha }}"
+          git push origin master
+
+      - name: Wait for rollout (optional sanity check)
+        run: |
+          aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
+          kubectl rollout status deployment/ai-fastapi -n $K8S_NAMESPACE --timeout=300s

@@ -12,8 +12,6 @@ permissions:
 env:
   AWS_REGION: ap-northeast-2
   ECR_REPOSITORY: forenshield-ai-fastapi
-  EKS_CLUSTER: forenshield
-  K8S_NAMESPACE: forenshield
   INFRA_REPO: sk-final-deepfake/infra-forensic
   DEPLOYMENT_PATH: config/k8s/ai-fastapi/deployment.yaml
 
@@ -80,8 +78,3 @@ jobs:
           git diff --staged --quiet && echo "No manifest change" && exit 0
           git commit -m "ci: ai-fastapi image → ${{ github.sha }}"
           git push origin master
-
-      - name: Wait for rollout (optional sanity check)
-        run: |
-          aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
-          kubectl rollout status deployment/ai-fastapi -n $K8S_NAMESPACE --timeout=300s

@@ -4,7 +4,6 @@
 > **분석 환경:** welabs GPU (`sk4team@58.127.241.84`, `~/forenShield-ai`)  
 > **분석 스크립트:** `scripts/eval/analyze_optical_flow_threshold.py`  
 > **결과 JSON:** `results/infer/pwcnet_threshold_analysis.json` (GPU 로컬)  
-> **본 문서:** 로컬 참고용 (`ai/docs/`). GitHub 푸시 대상 아님.
 
 ---
 

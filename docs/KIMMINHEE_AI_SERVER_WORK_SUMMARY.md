@@ -181,3 +181,4 @@ POST /ai/analyze
 4. Sprint 2 모델 후보 정리
 5. 실제 모델 포팅 준비
 ```
+

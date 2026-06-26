@@ -2,7 +2,7 @@
 
 > **작성 기준일:** 2026-06-23  
 > **상태:** 설계 확정(팀 공유용) · 2차·프로파일은 신규 구현  
-> **관련:** [VIDEO_DEEPFAKE_MODEL_BENCHMARK_3x3.md](./VIDEO_DEEPFAKE_MODEL_BENCHMARK_3x3.md) · [GMFLOW_DEEPFAKE_SCORE.md](./GMFLOW_DEEPFAKE_SCORE.md) · BE [ai-json.md](../../backend/docs/integrations/ai-json.md)
+> **관련:** [REGION_THRESHOLD_CALIBRATION.md](./REGION_THRESHOLD_CALIBRATION.md) · [VIDEO_DEEPFAKE_MODEL_BENCHMARK_3x3.md](./VIDEO_DEEPFAKE_MODEL_BENCHMARK_3x3.md) · [GMFLOW_DEEPFAKE_SCORE.md](./GMFLOW_DEEPFAKE_SCORE.md) · BE [ai-json.md](../../backend/docs/integrations/ai-json.md)
 
 ---
 
@@ -299,8 +299,8 @@ A. 가능. 리포트에서 **deepfake / edit** 근거를 **분리 표기**합니
 
 ## 11. 다음 액션 (담당 TBD)
 
-- [ ] blur / blockiness / FFT **계산 스펙** (2차 전용)
-- [ ] H/L 임계값 · 8 region → 4 bucket 매핑
+- [ ] blur / blockiness / FFT **계산 스펙** — [REGION_THRESHOLD_CALIBRATION.md](./REGION_THRESHOLD_CALIBRATION.md) §3
+- [ ] H/L 임계값 보정 (모듈 꺾임) · 8 region → 4 bucket — [REGION_THRESHOLD_CALIBRATION.md](./REGION_THRESHOLD_CALIBRATION.md) §4
 - [ ] `weights_2nd.yaml` 템플릿
 - [ ] BE: `compressionRegionId` 등 **2차 필드**만 `ai-json.md` 반영
 - [ ] 1차 COMPLETED → 2차 tamper **PATCH** RabbitMQ 시퀀스

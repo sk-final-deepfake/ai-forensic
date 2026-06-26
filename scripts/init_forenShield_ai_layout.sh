@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# forenShield-ai GPU 워크스테이션 디렉터리·설정 템플릿 초기화
+# forenShield-ai GPU 워크스테이션 — deepfake / forgery 2트랙 디렉터리 초기화
 #
 # 사용 (GPU 서버):
 #   bash init_forenShield_ai_layout.sh
@@ -10,37 +10,88 @@ set -euo pipefail
 
 ROOT="${FORENSHIELD_AI_ROOT:-$HOME/forenShield-ai}"
 MODEL_VERSION="${MODEL_VERSION:-v1.0.0}"
+PROFILE_VERSION="${PROFILE_VERSION:-v1.0.0}"
 
 echo "==> forenShield-ai layout root: ${ROOT}"
 mkdir -p "${ROOT}"
 
-DIRS=(
+SHARED_DIRS=(
   "config"
-  "models/test/video/xception/${MODEL_VERSION}"
-  "models/dev/video/xception/${MODEL_VERSION}"
-  "models/deploy/video/xception/${MODEL_VERSION}"
-  "data/test/video"
-  "data/golden/v1/video"
-  "data/pull/evidence"
-  "data/pull/models"
-  "data/pull/golden/v1"
-  "data/raw"
-  "data/cache"
-  "results/infer"
-  "results/eval"
-  "results/reports"
-  "checkpoints"
-  "scripts/download/models"
-  "scripts/download/data"
-  "scripts/download/deps"
-  "scripts/infer"
-  "scripts/eval"
-  "scripts/promote"
-  "scripts/upload"
-  "logs"
+  "logs/deepfake"
+  "logs/forgery"
 )
 
-for d in "${DIRS[@]}"; do
+DEEPFAKE_DIRS=(
+  "deepfake/models/test/video/xception/${MODEL_VERSION}"
+  "deepfake/models/test/video/convnext/${MODEL_VERSION}"
+  "deepfake/models/test/video/videomae/${MODEL_VERSION}"
+  "deepfake/models/test/video/timesformer/${MODEL_VERSION}"
+  "deepfake/models/test/video/video-swin/${MODEL_VERSION}"
+  "deepfake/models/test/optical/gmflow"
+  "deepfake/models/test/optical/raft"
+  "deepfake/models/test/optical/pwcnet"
+  "deepfake/models/dev/video/xception/${MODEL_VERSION}"
+  "deepfake/models/deploy/video/xception/${MODEL_VERSION}"
+  "deepfake/data/test/video"
+  "deepfake/data/train/video"
+  "deepfake/data/golden/v1/video"
+  "deepfake/data/pull/evidence"
+  "deepfake/data/pull/models"
+  "deepfake/data/pull/golden/v1"
+  "deepfake/data/raw/faceforensics"
+  "deepfake/data/raw/voxceleb"
+  "deepfake/data/raw/celeb-df-v2"
+  "deepfake/data/cache"
+  "deepfake/results/infer"
+  "deepfake/results/eval"
+  "deepfake/results/reports"
+  "deepfake/checkpoints"
+  "deepfake/scripts/download/models"
+  "deepfake/scripts/download/data"
+  "deepfake/scripts/download/deps"
+  "deepfake/scripts/infer"
+  "deepfake/scripts/eval"
+  "deepfake/scripts/promote"
+  "deepfake/scripts/upload"
+)
+
+FORGERY_DIRS=(
+  "forgery/config"
+  "forgery/models/test/spatial/trufor/${MODEL_VERSION}"
+  "forgery/models/test/spatial/catnet/${MODEL_VERSION}"
+  "forgery/models/test/spatial/sparsevit/${MODEL_VERSION}"
+  "forgery/models/test/temporal/gmflow"
+  "forgery/models/test/compression/dc/${MODEL_VERSION}"
+  "forgery/models/dev/spatial/trufor/${MODEL_VERSION}"
+  "forgery/models/deploy/spatial/trufor/${MODEL_VERSION}"
+  "forgery/models/deploy/profile/thresholds/${PROFILE_VERSION}"
+  "forgery/data/test/video"
+  "forgery/data/test/image/casia"
+  "forgery/data/test/image/imd2020"
+  "forgery/data/cal/threshold"
+  "forgery/data/cal/fusion"
+  "forgery/data/synth/regions"
+  "forgery/data/golden/v1/video"
+  "forgery/data/golden/v1/image"
+  "forgery/data/pull/evidence"
+  "forgery/data/pull/models"
+  "forgery/data/raw"
+  "forgery/data/cache"
+  "forgery/results/infer"
+  "forgery/results/eval"
+  "forgery/results/reports"
+  "forgery/checkpoints"
+  "forgery/scripts/profile"
+  "forgery/scripts/download/models"
+  "forgery/scripts/download/data"
+  "forgery/scripts/data"
+  "forgery/scripts/infer"
+  "forgery/scripts/eval"
+  "forgery/scripts/promote"
+  "forgery/scripts/upload"
+)
+
+for d in "${SHARED_DIRS[@]}" "${DEEPFAKE_DIRS[@]}" "${FORGERY_DIRS[@]}"; do
   mkdir -p "${ROOT}/${d}"
 done
 
@@ -54,7 +105,7 @@ write_if_missing() {
   echo "    created: ${path}"
 }
 
-echo "==> config templates"
+echo "==> shared config templates"
 
 write_if_missing "${ROOT}/config/env.local.example" <<'EOF'
 # cp config/env.local.example config/env.local && 편집
@@ -62,6 +113,10 @@ export AWS_PROFILE=forenshield
 export AWS_REGION=ap-northeast-2
 export S3_MODELS_BUCKET=forenshield-models-877044078824
 export S3_EVIDENCE_BUCKET=forenshield-evidence-877044078824
+
+# 스크립트 기본 트랙 (deepfake | forgery)
+export FORENSHIELD_TRACK=deepfake
+export FORENSHIELD_AI_ROOT="${HOME}/forenShield-ai/${FORENSHIELD_TRACK}"
 EOF
 
 write_if_missing "${ROOT}/config/buckets.yaml" <<'EOF'
@@ -79,26 +134,119 @@ upload:
   models_from: models/deploy/
   golden_from: data/golden/
   golden_to_prefix: golden-set/
+
+tracks:
+  deepfake:
+    s3_benchmark_prefix: cases/test/video-benchmark-datasets/
+  forgery:
+    s3_benchmark_prefix: cases/test/forgery-benchmark-datasets/
 EOF
 
-write_if_missing "${ROOT}/config/models.yaml" <<EOF
-# 모델 레지스트리 — test / dev / deploy 로컬 경로 + S3 deploy prefix
+write_if_missing "${ROOT}/config/models.deepfake.yaml" <<EOF
+# 1차 딥페이크 모델 레지스트리 — 로컬 루트: deepfake/
+track: deepfake
 models:
   - id: xception
     modality: video
     version: ${MODEL_VERSION}
     paths:
-      test: models/test/video/xception/${MODEL_VERSION}
-      dev: models/dev/video/xception/${MODEL_VERSION}
-      deploy: models/deploy/video/xception/${MODEL_VERSION}
+      test: deepfake/models/test/video/xception/${MODEL_VERSION}
+      dev: deepfake/models/dev/video/xception/${MODEL_VERSION}
+      deploy: deepfake/models/deploy/video/xception/${MODEL_VERSION}
     s3_deploy_prefix: video/xception/${MODEL_VERSION}
-    external_url: https://github.com/SCLBD/DeepfakeBench/releases/download/v1.0.1/xception_best.pth
+  - id: convnext
+    modality: video
+    version: ${MODEL_VERSION}
+    paths:
+      test: deepfake/models/test/video/convnext/${MODEL_VERSION}
+  - id: videomae
+    modality: video
+    version: ${MODEL_VERSION}
+    paths:
+      test: deepfake/models/test/video/videomae/${MODEL_VERSION}
+  - id: timesformer
+    modality: video
+    version: ${MODEL_VERSION}
+    paths:
+      test: deepfake/models/test/video/timesformer/${MODEL_VERSION}
+  - id: gmflow
+    modality: optical
+    paths:
+      test: deepfake/models/test/optical/gmflow
 EOF
 
-write_if_missing "${ROOT}/data/golden/v1/manifest.json" <<'EOF'
+write_if_missing "${ROOT}/config/models.forgery.yaml" <<EOF
+# 2차 위변조 모델·프로파일 레지스트리 — 로컬 루트: forgery/
+track: forgery
+models:
+  - id: trufor
+    role: spatial
+    version: ${MODEL_VERSION}
+    paths:
+      test: forgery/models/test/spatial/trufor/${MODEL_VERSION}
+      dev: forgery/models/dev/spatial/trufor/${MODEL_VERSION}
+      deploy: forgery/models/deploy/spatial/trufor/${MODEL_VERSION}
+    s3_deploy_prefix: forgery/spatial/trufor/${MODEL_VERSION}
+  - id: catnet
+    role: spatial
+    version: ${MODEL_VERSION}
+    paths:
+      test: forgery/models/test/spatial/catnet/${MODEL_VERSION}
+  - id: gmflow-discontinuity
+    role: temporal
+    paths:
+      test: forgery/models/test/temporal/gmflow
+    note: flow backbone은 deepfake/optical/gmflow 와 동일 가중치 공유 가능
+  - id: compression-profile
+    role: profile
+    version: ${PROFILE_VERSION}
+    paths:
+      deploy: forgery/models/deploy/profile/thresholds/${PROFILE_VERSION}
+    files:
+      - thresholds.yaml
+      - weights_2nd.yaml
+EOF
+
+write_if_missing "${ROOT}/forgery/config/thresholds.yaml" <<EOF
+version: "${PROFILE_VERSION}"
+status: draft
+calibration:
+  dataset: null
+  method: module_performance_changepoint
+metrics:
+  blur:
+    high_if_gte: null
+  blockiness:
+    high_if_gte: null
+  fft_peak:
+    high_if_gte: null
+synthesis_margin_eps: 0.05
+EOF
+
+write_if_missing "${ROOT}/forgery/config/weights_2nd.yaml" <<'EOF'
+version: "0.1"
+status: draft
+buckets:
+  CLEAN:   { regions: [R0, R1], w_tr: 0.55, w_fl: 0.30, w_dc: 0.15 }
+  COMPRESS: { regions: [R2, R3, R5], w_tr: 0.35, w_fl: 0.25, w_dc: 0.40 }
+  BLUR:    { regions: [R4, R6], w_tr: 0.25, w_fl: 0.15, w_dc: 0.30 }
+  HARD:    { regions: [R7], w_tr: 0.25, w_fl: 0.15, w_dc: 0.35, confidence_cap: 0.85 }
+EOF
+
+write_if_missing "${ROOT}/deepfake/data/golden/v1/manifest.json" <<'EOF'
 {
   "version": "v1",
-  "description": "회귀 테스트 고정셋 — video 파일과 기대 라벨을 items에 추가하세요",
+  "track": "deepfake",
+  "description": "1차 딥페이크 회귀 고정셋",
+  "items": []
+}
+EOF
+
+write_if_missing "${ROOT}/forgery/data/golden/v1/manifest.json" <<'EOF'
+{
+  "version": "v1",
+  "track": "forgery",
+  "description": "2차 위변조 회귀 고정셋 — spatial/temporal 라벨 분리 권장",
   "items": []
 }
 EOF
@@ -106,62 +254,67 @@ EOF
 write_if_missing "${ROOT}/README.md" <<'EOF'
 # forenShield-ai (GPU 워크스테이션)
 
-모델 test / dev / deploy, 데이터, infer/eval, S3 sync 작업 공간.
+1차 **deepfake** · 2차 **forgery** 트랙을 분리한 모델 실험 작업 공간.
 
-## 빠른 시작
+## 트랙 선택
 
 ```bash
 cd ~/forenShield-ai
-python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -U pip
-# cp config/env.local.example config/env.local
+
+# 1차 딥페이크 (기본)
+export FORENSHIELD_TRACK=deepfake
+export FORENSHIELD_AI_ROOT="$HOME/forenShield-ai/deepfake"
+
+# 2차 위변조
+export FORENSHIELD_TRACK=forgery
+export FORENSHIELD_AI_ROOT="$HOME/forenShield-ai/forgery"
 ```
 
 ## 구조 상세
 
-`ai-forensic` 저장소: `docs/FORENSHIELD_AI_GPU_WORKSTATION.md`
+`ai-forensic/docs/FORENSHIELD_AI_GPU_WORKSTATION.md`
 
 ## 디렉터리 요약
 
 | 경로 | 용도 |
 |------|------|
-| models/test | 실험·초기 다운로드 |
-| models/dev | 개발·튜닝 통과본 |
-| models/deploy | S3 업로드·운영 확정본 |
-| data/test | 실험용 테스트 데이터셋 (video) |
-| data/golden | 회귀 테스트 고정셋 |
-| data/pull/evidence | S3 evidence copy pull |
-| data/pull/models | S3 deploy 모델 pull |
-| results/infer | 추론 결과 |
-| results/eval | 평가 지표 |
-| scripts/download | 모델·데이터 다운로드 |
-| scripts/infer | 추론 실행 |
-| scripts/eval | golden 채점 |
-| scripts/promote | test→dev→deploy |
-| scripts/upload | S3 업로드 |
+| `deepfake/` | 1차 Xception·Transformer·GMFlow 벤치 |
+| `forgery/` | 2차 TruFor·GMFlow(컷)·DC·region 프로파일 |
+| `config/` | 공통 env·S3·모델 레지스트리 (deepfake/forgery yaml) |
+| `.venv/` | 공통 Python 환경 |
 EOF
 
-write_if_missing "${ROOT}/scripts/download/data/README.md" <<'EOF'
-# download/data
+write_if_missing "${ROOT}/deepfake/scripts/download/models/README.md" <<'EOF'
+# deepfake — download/models
 
-| 스크립트 (추가 예정) | 기능 |
-|---------------------|------|
-| s3_pull_evidence.sh | evidence 버킷 copy → data/pull/evidence/ |
-| s3_pull_deploy_model.sh | models 버킷 deploy → data/pull/models/ |
-| s3_pull_golden.sh | golden-set S3 ↔ data/golden/ |
-| golden_fetch_samples.sh | golden 로컬 샘플 구성 |
+ai-forensic 저장소 `scripts/download/models/` 스크립트를 복사하거나 symlink.
+실행 전: `export FORENSHIELD_AI_ROOT=~/forenShield-ai/deepfake`
 EOF
 
-write_if_missing "${ROOT}/scripts/download/models/README.md" <<'EOF'
-# download/models
+write_if_missing "${ROOT}/forgery/scripts/profile/README.md" <<'EOF'
+# forgery — profile
 
-| 스크립트 (추가 예정) | 기능 |
-|---------------------|------|
-| video_download_xception.sh | DeepfakeBench → models/test/video/xception/ |
+| 스크립트 (P2 예정) | 기능 |
+|-------------------|------|
+| compression_profile.py | blur, blockiness, fft_peak, region_id |
+| calibrate_thresholds.py | cal set → thresholds.yaml |
+EOF
+
+write_if_missing "${ROOT}/forgery/scripts/data/README.md" <<'EOF'
+# forgery — data
+
+| 스크립트 (P2 예정) | 기능 |
+|-------------------|------|
+| synthesize_region_variants.py | region box 안 랜덤 가공 |
 EOF
 
 echo ""
 echo "==> Done. Layout at: ${ROOT}"
-echo "    find ${ROOT} -maxdepth 3 -type d | sort"
+echo "    deepfake track: ${ROOT}/deepfake"
+echo "    forgery track:  ${ROOT}/forgery"
+echo ""
+echo "    기존 flat 구조 마이그레이션:"
+echo "    bash ai-forensic/scripts/migrate_flat_to_track_layout.sh"
+echo ""
 echo "    Full doc: ai-forensic/docs/FORENSHIELD_AI_GPU_WORKSTATION.md"

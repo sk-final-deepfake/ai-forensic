@@ -10,10 +10,12 @@ ai-forensic/scripts/forgery/train/
 ├── train_trufor_video_forgery.py
 ├── trufor_video_common.py
 ├── run_trufor_forgery_train.sh
+├── run_trufor_forgery_train_v2.sh   # Phase 1 recipe v2
+├── merge_trufor_infer_checkpoint.py
 └── vendor_patches/
     ├── dataset_ForenShieldVideo.py
     ├── trufor_forgery_video.yaml
-    └── data_core_FSVIDEO.patch.md   # 참고용, 패치 필수 아님
+    └── trufor_forgery_video_v2.yaml
 ```
 
 서버에 이미 있는 GMFlow 스크립트(`train_gmflow_*.py`)는 **덮어쓰지 않음**.
@@ -25,6 +27,20 @@ ai-forensic/scripts/forgery/train/
 로컬 PC에서 실행 (`c:\FINAL` 기준):
 
 ```powershell
+cd c:\FINAL\ai-forensic\scripts\forgery\train
+.\deploy_to_gpu.ps1
+```
+
+**비밀번호 횟수:** 스크립트 일괄 scp + `vendor_patches/` 폴더 scp + 확인 ssh → **최대 3번**. SSH 키 등록 시 0번.
+
+```powershell
+ssh-keygen -t ed25519 -f $env:USERPROFILE\.ssh\id_ed25519 -N '""'
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh sk4team@58.127.241.84 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys"
+```
+
+수동 scp가 필요할 때 (참고):
+
+```powershell
 $REMOTE = "sk4team@58.127.241.84"
 $LOCAL  = "c:\FINAL\ai-forensic\scripts\forgery\train"
 $REMOTE_DIR = "~/forenShield-ai/forgery/scripts/train"
@@ -32,11 +48,17 @@ $REMOTE_DIR = "~/forenShield-ai/forgery/scripts/train"
 scp "$LOCAL\prepare_trufor_video_frames.py" "${REMOTE}:${REMOTE_DIR}/"
 scp "$LOCAL\train_trufor_video_forgery.py"  "${REMOTE}:${REMOTE_DIR}/"
 scp "$LOCAL\trufor_video_common.py"         "${REMOTE}:${REMOTE_DIR}/"
+scp "$LOCAL\merge_trufor_infer_checkpoint.py" "${REMOTE}:${REMOTE_DIR}/"
 scp "$LOCAL\run_trufor_forgery_train.sh"     "${REMOTE}:${REMOTE_DIR}/"
+scp "$LOCAL\run_trufor_forgery_train_v2.sh"  "${REMOTE}:${REMOTE_DIR}/"
 
 ssh $REMOTE "mkdir -p ~/forenShield-ai/forgery/scripts/train/vendor_patches"
 scp "$LOCAL\vendor_patches\dataset_ForenShieldVideo.py" "${REMOTE}:${REMOTE_DIR}/vendor_patches/"
 scp "$LOCAL\vendor_patches\trufor_forgery_video.yaml"   "${REMOTE}:${REMOTE_DIR}/vendor_patches/"
+scp "$LOCAL\vendor_patches\trufor_forgery_video_v2.yaml" "${REMOTE}:${REMOTE_DIR}/vendor_patches/"
+
+# 배포 확인 (파일 없음 / SyntaxError 방지)
+ssh $REMOTE "ls -la ${REMOTE_DIR}/run_trufor_forgery_train_v2.sh && python3 -m py_compile ${REMOTE_DIR}/prepare_trufor_video_frames.py"
 ```
 
 Windows에서 복사한 `.sh`는 CRLF 줄바꿈 때문에 Linux에서 깨질 수 있습니다. 서버에서 한 번 실행:
@@ -84,6 +106,25 @@ cp scripts/train/vendor_patches/trufor_forgery_video.yaml \
 bash scripts/train/run_trufor_forgery_train.sh
 ```
 
+### Phase 1 — recipe v2 (현재 권장)
+
+**배포는 GPU가 아니라 로컬 Windows PowerShell에서** `deploy_to_gpu.ps1` 또는 위 scp 목록으로 실행합니다.
+
+```bash
+cd ~/forenShield-ai/forgery
+source ../.venv/bin/activate
+sed -i 's/\r$//' scripts/train/run_trufor_forgery_train_v2.sh
+bash scripts/train/run_trufor_forgery_train_v2.sh
+```
+
+배포 직후 확인:
+
+```bash
+ls -la scripts/train/run_trufor_forgery_train_v2.sh
+python3 -m py_compile scripts/train/prepare_trufor_video_frames.py
+# SyntaxError 나오면 prepare 파일이 깨진 것 → 로컬에서 다시 scp
+```
+
 또는 단계별:
 
 ```bash
@@ -106,8 +147,6 @@ python3 scripts/train/train_trufor_video_forgery.py \
 `-exp`는 **config yaml 파일 이름**(stem)입니다. `trufor-forgery-smoke-20260701`처럼 날짜를 넣으면 안 됩니다.  
 체크포인트 폴더 이름은 `--run-name`으로 지정합니다.
 
-
-
 ## 결과 위치
 
 ```text
@@ -118,6 +157,8 @@ vendor/TruFor/TruFor_train_test/log/train/<실험명>/best.pth.tar
 
 
 ## 트러블슈팅
+
+
 
 ### `np.sctypes was removed in NumPy 2.0` (albumentations/imgaug)
 
@@ -137,6 +178,8 @@ cp scripts/train/vendor_patches/trufor_forgery_video.yaml \
 ```bash
 pip install 'numpy<2.0'
 ```
+
+
 
 ### `No module named 'tensorboardX'`
 
@@ -174,7 +217,11 @@ grep -n "np\.int" vendor/TruFor/TruFor_train_test/lib/utils.py
 
 ---
 
+
+
 ## 중단 후 이어하기 (resume)
+
+
 
 ### 1) prepare (프레임 추출) — 자동 스킵
 
@@ -188,6 +235,8 @@ python3 scripts/train/prepare_trufor_video_frames.py \
   --frames-per-video 8
 ```
 
+
+
 ### 2) train — epoch 단위 checkpoint
 
 매 epoch 끝에 저장됩니다:
@@ -198,7 +247,7 @@ vendor/TruFor/TruFor_train_test/log/train/<실험명>/
 └── best.pth.tar         # valid 지표 최고 (배포/infer용)
 ```
 
-**이어서 학습** — 반드시 **처음과 같은 `-exp` 이름** + `--resume`:
+**이어서 학습** — 반드시 **처음과 같은** `-exp` **이름** + `--resume`:
 
 ```bash
 python3 scripts/train/train_trufor_video_forgery.py \
@@ -223,6 +272,8 @@ tmux new -s trufor
 # 위 train 명령 실행 후 Ctrl+B, D 로 detach
 # 재접속: tmux attach -t trufor
 ```
+
+
 
 ## infer용 checkpoint merge (필수)
 
@@ -252,3 +303,4 @@ python3 scripts/infer/spatial_mvtamperbench_benchmark.py \
   --trufor-weights "$CKPT" \
   --run-id "trufor-csvted200-tuned-${RUN_DATE}"
 ```
+

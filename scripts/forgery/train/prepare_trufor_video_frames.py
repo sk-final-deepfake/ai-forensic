@@ -10,7 +10,8 @@ Output layout (under --out-dir):
 
 Recipe v2 (default): spatial + middle_tampered only; in-window mask=255,
 out-of-window fake frames mask=0 (hard negative). Non-middle spatial videos skipped.
-"""from __future__ import annotations
+"""
+from __future__ import annotations
 
 import argparse
 import json

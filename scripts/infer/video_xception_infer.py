@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Smoke infer for DeepfakeBench xception_best.pth on local mp4 folders.
 
-No DeepfakeBench / dlib required. Uses OpenCV face crop + 32-frame sampling.
+No DeepfakeBench / dlib required. Face crop via Haar or MediaPipe + frame sampling.
 """
 from __future__ import annotations
 
@@ -16,6 +16,16 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from face_crop import FaceCropper, create_face_cropper, crop_face as _legacy_crop_face
+from xception_operating_defaults import (
+    DEFAULT_AGGREGATE,
+    DEFAULT_CROP_METHOD,
+    DEFAULT_CROP_PADDING,
+    DEFAULT_FAKE_THRESHOLD,
+    DEFAULT_NUM_FRAMES,
+    DEFAULT_TOP_K,
+)
 
 
 class SeparableConv2d(nn.Module):
@@ -185,21 +195,8 @@ def read_frames(video_path: Path, num_frames: int = 32) -> list[np.ndarray]:
 
 
 def crop_face(frame: np.ndarray, face_cascade: cv2.CascadeClassifier, size: int = 256) -> np.ndarray | None:
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
-    if len(faces) == 0:
-        return None
-    x, y, w, h = max(faces, key=lambda b: b[2] * b[3])
-    pad = int(0.2 * max(w, h))
-    h_img, w_img = frame.shape[:2]
-    x1 = max(0, x - pad)
-    y1 = max(0, y - pad)
-    x2 = min(w_img, x + w + pad)
-    y2 = min(h_img, y + h + pad)
-    crop = frame[y1:y2, x1:x2]
-    if crop.size == 0:
-        return None
-    return cv2.resize(crop, (size, size), interpolation=cv2.INTER_AREA)
+    """Backward-compatible Haar crop for other infer scripts."""
+    return _legacy_crop_face(frame, face_cascade, size=size, padding=0.2, square=False)
 
 
 def frames_to_tensor(frames: list[np.ndarray], device: torch.device) -> torch.Tensor:
@@ -272,6 +269,29 @@ def _distribution_stats(values: np.ndarray) -> dict:
     }
 
 
+def aggregate_prob_fake(
+    prob_fake: np.ndarray,
+    method: str,
+    *,
+    top_k: int = 5,
+    frame_threshold: float = 0.5,
+) -> float:
+    if prob_fake.size == 0:
+        return 0.0
+    if method == "mean":
+        return float(np.mean(prob_fake))
+    if method == "median":
+        return float(np.median(prob_fake))
+    if method == "max":
+        return float(np.max(prob_fake))
+    if method == "topk":
+        k = min(top_k, int(prob_fake.size))
+        return float(np.mean(np.sort(prob_fake)[-k:]))
+    if method == "vote":
+        return float(np.mean(prob_fake >= frame_threshold))
+    raise ValueError(f"unknown aggregate method: {method}")
+
+
 def _mean_classification_row(per_frame: list[dict], *, threshold: float) -> dict:
     keys = ("logit_real", "logit_fake", "prob_real", "prob_fake", "margin", "entropy", "confidence")
     aggregate = {key: _round4(float(np.mean([row[key] for row in per_frame]))) for key in keys}
@@ -305,6 +325,8 @@ def build_score_breakdown(
     threshold: float = 0.5,
     frames_sampled: int,
     frames_without_face: int,
+    aggregate: str = "mean",
+    top_k: int = 5,
 ) -> dict:
     per_frame = logits_to_frame_rows(logits, frame_indices, threshold=threshold)
     prob_fake_values = np.array([row["prob_fake"] for row in per_frame], dtype=np.float64)
@@ -316,24 +338,38 @@ def build_score_breakdown(
 
     fake_frame_count = int(np.sum(prob_fake_values >= threshold))
     real_frame_count = int(len(per_frame) - fake_frame_count)
-    aggregate = _mean_classification_row(per_frame, threshold=threshold)
+    aggregate_row = _mean_classification_row(per_frame, threshold=threshold)
+    fake_score = aggregate_prob_fake(
+        prob_fake_values,
+        aggregate,
+        top_k=top_k,
+        frame_threshold=threshold,
+    )
+    aggregate_row["prob_fake"] = _round4(fake_score)
+    aggregate_row["pred_label"] = "fake" if fake_score >= threshold else "real"
 
     per_frame_scores = [
         {"frame_index": row["frame_index"], "fake_score": row["prob_fake"]}
         for row in per_frame
     ]
 
+    method_label = f"{aggregate}_prob_fake_over_face_frames"
+    if aggregate == "topk":
+        method_label = f"top{top_k}_mean_prob_fake_over_face_frames"
+
     return {
         "schema_version": SCORE_BREAKDOWN_SCHEMA_VERSION,
-        "method": "mean_classification_outputs_over_face_frames",
+        "method": method_label,
+        "aggregate_method": aggregate,
+        "top_k": top_k if aggregate == "topk" else None,
         "threshold": threshold,
         "margin_definition": "logit_fake_minus_logit_real",
         "entropy_log_base": "natural",
         "frames_sampled": frames_sampled,
         "frames_with_face": len(per_frame),
         "frames_without_face": frames_without_face,
-        "aggregate": aggregate,
-        "aggregate_fake_score": aggregate["prob_fake"],
+        "aggregate": aggregate_row,
+        "aggregate_fake_score": fake_score,
         "score_stats": {
             "prob_fake": _distribution_stats(prob_fake_values),
             "prob_real": _distribution_stats(prob_real_values),
@@ -355,30 +391,35 @@ def build_score_breakdown(
 def infer_video(
     model: XceptionDetectorLite,
     video_path: Path,
-    face_cascade: cv2.CascadeClassifier,
+    face_cropper: FaceCropper,
     device: torch.device,
     *,
     threshold: float = 0.5,
+    num_frames: int = 32,
+    aggregate: str = "mean",
+    top_k: int = 5,
 ) -> dict:
-    samples = read_frame_samples(video_path)
+    samples = read_frame_samples(video_path, num_frames=num_frames)
     face_samples: list[dict] = []
     for sample in samples:
-        crop = crop_face(sample["frame"], face_cascade)
+        crop = face_cropper.crop(sample["frame"])
         if crop is not None:
             face_samples.append({"frame_index": sample["frame_index"], "crop": crop})
 
     if not face_samples:
+        breakdown = empty_score_breakdown(
+            threshold=threshold,
+            frames_sampled=len(samples),
+            frames_without_face=len(samples),
+        )
+        breakdown.update(face_cropper.to_metadata())
         return {
             "file": video_path.name,
             "status": "no_face",
             "fake_score": None,
             "pred_label": None,
             "frames_used": 0,
-            "score_breakdown": empty_score_breakdown(
-                threshold=threshold,
-                frames_sampled=len(samples),
-                frames_without_face=len(samples),
-            ),
+            "score_breakdown": breakdown,
         }
 
     crops = [s["crop"] for s in face_samples]
@@ -391,7 +432,10 @@ def infer_video(
         threshold=threshold,
         frames_sampled=len(samples),
         frames_without_face=len(samples) - len(face_samples),
+        aggregate=aggregate,
+        top_k=top_k,
     )
+    breakdown.update(face_cropper.to_metadata())
     fake_score = breakdown["aggregate_fake_score"]
     pred_label = breakdown["aggregate"]["pred_label"]
     return {
@@ -445,7 +489,7 @@ def write_per_file_json(json_dir: Path, item: dict) -> Path:
 
 def run_directory(
     model: XceptionDetectorLite,
-    face_cascade: cv2.CascadeClassifier,
+    face_cropper: FaceCropper,
     device: torch.device,
     input_dir: Path,
     ground_truth_label: str | None,
@@ -454,6 +498,9 @@ def run_directory(
     per_file_json_dir: Path | None,
     model_id: str = "xception/v1.0.0",
     threshold: float = 0.5,
+    num_frames: int = 32,
+    aggregate: str = "mean",
+    top_k: int = 5,
 ) -> list[dict]:
     videos = sorted(input_dir.glob("*.mp4"))
     if not videos:
@@ -461,7 +508,16 @@ def run_directory(
 
     items: list[dict] = []
     for video_path in videos:
-        result = infer_video(model, video_path, face_cascade, device, threshold=threshold)
+        result = infer_video(
+            model,
+            video_path,
+            face_cropper,
+            device,
+            threshold=threshold,
+            num_frames=num_frames,
+            aggregate=aggregate,
+            top_k=top_k,
+        )
         item = build_item(
             video_path,
             result,
@@ -512,7 +568,41 @@ def main() -> None:
         help="write one JSON per video under results/infer/<run_id>/json/",
     )
     parser.add_argument("--threshold", type=float, default=0.5, help="fake_score >= threshold => fake")
+    parser.add_argument(
+        "--aggregate",
+        default="mean",
+        choices=("mean", "median", "max", "topk", "vote"),
+        help="how to aggregate per-frame prob_fake into video fake_score",
+    )
+    parser.add_argument("--top-k", type=int, default=5, help="k for --aggregate topk")
+    parser.add_argument("--num-frames", type=int, default=32, help="frames sampled per video")
+    parser.add_argument(
+        "--crop-method",
+        default="haar",
+        choices=("haar", "mediapipe"),
+        help="face detector for crop (step-2: mediapipe)",
+    )
+    parser.add_argument("--crop-padding", type=float, default=0.2, help="bbox padding ratio (step-2: 0.3)")
+    parser.add_argument(
+        "--crop-square",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="force square face bbox before resize",
+    )
+    parser.add_argument(
+        "--operating",
+        action="store_true",
+        help="Step 2/3 ops: MediaPipe p0.3 + topk k=5 + threshold 0.78",
+    )
     args = parser.parse_args()
+    if args.operating:
+        args.threshold = DEFAULT_FAKE_THRESHOLD
+        args.aggregate = DEFAULT_AGGREGATE
+        args.top_k = DEFAULT_TOP_K
+        args.num_frames = DEFAULT_NUM_FRAMES
+        args.crop_method = DEFAULT_CROP_METHOD
+        args.crop_padding = DEFAULT_CROP_PADDING
+        args.crop_square = True
 
     root = Path(args.root).resolve()
     input_dir = Path(args.input_dir)
@@ -533,19 +623,29 @@ def main() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model(weights, device)
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-
-    items = run_directory(
-        model,
-        face_cascade,
-        device,
-        input_dir,
-        args.label,
-        run_id,
-        weights,
-        json_dir,
-        threshold=args.threshold,
+    face_cropper = create_face_cropper(
+        method=args.crop_method,
+        padding=args.crop_padding,
+        square=args.crop_square,
     )
+
+    try:
+        items = run_directory(
+            model,
+            face_cropper,
+            device,
+            input_dir,
+            args.label,
+            run_id,
+            weights,
+            json_dir,
+            threshold=args.threshold,
+            num_frames=args.num_frames,
+            aggregate=args.aggregate,
+            top_k=args.top_k,
+        )
+    finally:
+        face_cropper.close()
     metrics = compute_metrics(items, args.label)
 
     pred_path = infer_dir / "predictions.json"
@@ -556,6 +656,12 @@ def main() -> None:
         "run_id": run_id,
         "model": "xception/v1.0.0",
         "threshold": args.threshold,
+        "aggregate": args.aggregate,
+        "top_k": args.top_k,
+        "num_frames": args.num_frames,
+        "crop_method": args.crop_method,
+        "crop_padding": args.crop_padding,
+        "crop_square": args.crop_square,
         "weights": str(weights),
         "input_dir": str(input_dir),
         "device": str(device),

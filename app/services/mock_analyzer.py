@@ -2,9 +2,10 @@ from app.schemas.analysis import AnalysisRequest, AnalysisResponse
 
 
 def analyze_mock(request: AnalysisRequest) -> AnalysisResponse:
+    file_id = request.fileId if request.fileId is not None else (request.evidenceId or 0)
     return AnalysisResponse(
         analysisRequestId=request.analysisRequestId,
-        fileId=request.fileId,
+        fileId=file_id,
         fileType=request.fileType,
         status="MOCK_ANALYSIS_COMPLETED",
         rawScore=0.75,

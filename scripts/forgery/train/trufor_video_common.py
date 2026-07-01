@@ -104,12 +104,16 @@ def build_frame_plans(
     spatial_tamper_types: frozenset[str] = DEFAULT_SPATIAL_TAMPER_TYPES,
     include_temporal_fakes: bool = False,
     require_middle_tamper_window: bool = True,
+    skip_out_of_window_fake: bool = False,
 ) -> list[FramePlan]:
     """Build per-frame plans for TruFor prepare.
 
     When ``require_middle_tamper_window`` is True (recipe v2), spatial tampered
     videos without ``middle_tampered`` in the filename are skipped instead of
     labelling every frame positive (weak full-frame supervision).
+
+    When ``skip_out_of_window_fake`` is True (recipe v4), middle-tampered spatial
+    videos omit out-of-window frames entirely (no hard-negative mask=0).
     """
     plans: list[FramePlan] = []
 
@@ -143,7 +147,10 @@ def build_frame_plans(
                 duration = parse_middle_tamper_seconds(video.name)
                 start, end = middle_tamper_window(total, fps, duration)
                 for idx in indices:
-                    label = 1 if start <= idx <= end else 0
+                    in_window = start <= idx <= end
+                    if not in_window and skip_out_of_window_fake:
+                        continue
+                    label = 1 if in_window else 0
                     plans.append(
                         FramePlan(
                             video_path=video,

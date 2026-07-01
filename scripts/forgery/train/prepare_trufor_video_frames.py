@@ -10,6 +10,9 @@ Output layout (under --out-dir):
 
 Recipe v2 (default): spatial + middle_tampered only; in-window mask=255,
 out-of-window fake frames mask=0 (hard negative). Non-middle spatial videos skipped.
+
+Recipe v4 (--skip-out-of-window-fake): in-window tampered frames only; out-of-window
+frames on fake videos are omitted from train/valid lists (no hard negative).
 """
 from __future__ import annotations
 
@@ -87,6 +90,12 @@ def main() -> None:
         default=True,
         help="Skip spatial tampered videos without middle_tampered in filename (recipe v2, default on)",
     )
+    parser.add_argument(
+        "--skip-out-of-window-fake",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Recipe v4: drop out-of-window frames on middle-tampered fakes (no mask=0 hard neg)",
+    )
     parser.add_argument("--max-items", type=int, default=0, help="Debug cap (0=all)")
     args = parser.parse_args()
 
@@ -100,6 +109,7 @@ def main() -> None:
         spatial_tamper_types=spatial_types,
         include_temporal_fakes=args.include_temporal_fakes,
         require_middle_tamper_window=args.require_middle_window,
+        skip_out_of_window_fake=args.skip_out_of_window_fake,
     )
     if args.max_items > 0:
         plans = plans[: args.max_items]
@@ -152,14 +162,31 @@ def main() -> None:
     (out_dir / "train_list.txt").write_text("\n".join(train_lines) + ("\n" if train_lines else ""), encoding="utf-8")
     (out_dir / "valid_list.txt").write_text("\n".join(valid_lines) + ("\n" if valid_lines else ""), encoding="utf-8")
 
+    if args.skip_out_of_window_fake:
+        recipe = "v4"
+        note = (
+            "v4: in-window tampered frames only (mask=255); "
+            "out-of-window fake frames omitted; all original frames mask=0"
+        )
+    elif args.require_middle_window:
+        recipe = "v2"
+        note = (
+            "v2: mask=255 only for in-window tampered frames; "
+            "out-of-window fake frames and all real frames mask=0"
+        )
+    else:
+        recipe = "v1"
+        note = "v1: weak full-frame positive on spatial tampered videos"
+
     meta = {
         "data_root": str(data_root),
         "out_dir": str(out_dir),
-        "recipe": "v2" if args.require_middle_window else "v1",
+        "recipe": recipe,
         "frames_per_video": args.frames_per_video,
         "spatial_types": sorted(spatial_types),
         "include_temporal_fakes": args.include_temporal_fakes,
         "require_middle_tamper_window": args.require_middle_window,
+        "skip_out_of_window_fake": args.skip_out_of_window_fake,
         "train_frames": len(train_lines),
         "valid_frames": len(valid_lines),
         "train_videos": len(train_videos),
@@ -167,10 +194,7 @@ def main() -> None:
         "label_counts": dict(label_counter),
         "skipped": skipped,
         "seed": args.seed,
-        "note": (
-            "v2: mask=255 only for in-window tampered frames; "
-            "out-of-window fake frames and all real frames mask=0"
-        ),
+        "note": note,
     }
     (out_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 

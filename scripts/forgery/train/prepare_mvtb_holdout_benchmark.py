@@ -14,11 +14,14 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 import shutil
 from collections import Counter, defaultdict
 from pathlib import Path
 
 from trufor_video_common import VIDEO_SUFFIXES, iter_videos
+
+MIDDLE_TAMPER_RE = re.compile(r"middle_tampered_([a-z_]+)", re.IGNORECASE)
 
 
 def video_id_from_rel(rel: str) -> str:
@@ -47,21 +50,44 @@ def collect_train_ids(train_root: Path) -> set[str]:
 
 
 def classify_rel(rel: str) -> tuple[str, str]:
-    parts = Path(rel).parts
-    if not parts:
-        return "unknown", "unknown"
-    if parts[0] == "original":
-        return "real", "original"
-    if parts[0] == "tampered" and len(parts) >= 2:
-        return "fake", parts[1]
-  # filename heuristics (flat pools)
+    posix = rel.replace("\\", "/")
+    low = posix.lower()
     name = Path(rel).name.lower()
-    if name.startswith("original_") or "/original/" in rel.replace("\\", "/"):
+    parts = Path(posix).parts
+
+    if parts and parts[0] == "original":
         return "real", "original"
-    for tok in ("masking", "rotate", "substitution", "dropping", "repetition"):
-        if tok in name or tok in rel.lower():
+    if name.startswith("original_") or "/original/" in f"/{low}/":
+        return "real", "original"
+
+    if parts and parts[0] == "tampered" and len(parts) >= 2:
+        return "fake", parts[1]
+    if "middle_tampered" in name:
+        m = MIDDLE_TAMPER_RE.search(name)
+        return "fake", (m.group(1).lower() if m else "tampered")
+    if name.startswith("tampered_") or "/tampered/" in f"/{low}/":
+        return "fake", "tampered"
+
+    for tok in ("frame-deletion", "frame-insertion", "frame-duplication", "eop-frame"):
+        if tok in low:
             return "fake", tok
-    return "fake", "unknown"
+
+    # MVBench / MVTamperBench clip without tamper marker → real
+    return "real", "original"
+
+
+def out_rel_for_benchmark(pool_rel: str, label: str, bucket: str) -> str:
+    """Normalize flat pool paths into original/ + tampered/<type>/ for infer."""
+    posix = pool_rel.replace("\\", "/")
+    if posix.startswith("original/") or posix.startswith("tampered/"):
+        return posix
+    name = Path(posix).name
+    if label == "real":
+        parent = Path(posix).parent.as_posix()
+        if parent and parent != ".":
+            return f"original/ood/{parent}/{name}"
+        return f"original/ood/{name}"
+    return f"tampered/{bucket}/{name}"
 
 
 def index_pool(pool_root: Path) -> dict[str, Path]:
@@ -123,6 +149,11 @@ def main() -> None:
         default=Path("data/train/video/forgery-gmflow-train-400"),
     )
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--allow-imbalanced-ood",
+        action="store_true",
+        help="If fewer new reals than needed, take all available + fill with fakes",
+    )
     parser.add_argument("--symlink", action="store_true", help="symlink videos (default: copy)")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -143,11 +174,11 @@ def main() -> None:
     n_need = args.total - n_existing
     if n_need < 0:
         raise SystemExit(f"--total {args.total} < existing {n_existing}")
-    if n_need % 2 != 0:
-        raise SystemExit(f"After reserving {n_existing} existing, remainder must be even")
+    if n_need % 2 != 0 and not args.allow_imbalanced_ood:
+        raise SystemExit(f"After reserving {n_existing} existing, remainder must be even (or use --allow-imbalanced-ood)")
 
     n_real_new = n_need // 2
-    n_fake_new = n_need // 2
+    n_fake_new = n_need - n_real_new if args.allow_imbalanced_ood else n_need // 2
     n_real_exist = sum(1 for r in existing_rels if classify_rel(r)[0] == "real")
     n_fake_exist = len(existing_rels) - n_real_exist
 
@@ -183,10 +214,22 @@ def main() -> None:
 
     picked_new_real = candidates_real[:n_real_new]
     if len(picked_new_real) < n_real_new:
-        raise SystemExit(
-            f"Not enough new real videos: need {n_real_new}, have {len(picked_new_real)} "
-            f"(pool={args.pool_root}, train excluded={len(train_ids)})"
+        if not args.allow_imbalanced_ood:
+            print(
+                f"pool stats: classified real={len(candidates_real)} fake="
+                f"{sum(len(v) for v in candidates_fake.values())} (before pick)"
+            )
+            raise SystemExit(
+                f"Not enough new real videos: need {n_real_new}, have {len(picked_new_real)} "
+                f"(pool={args.pool_root}, train excluded={len(train_ids)}). "
+                f"Try --allow-imbalanced-ood"
+            )
+        print(
+            f"WARN: only {len(picked_new_real)} new reals (wanted {n_real_new}) — "
+            f"adding {n_real_new - len(picked_new_real)} extra fakes"
         )
+        n_fake_new += n_real_new - len(picked_new_real)
+        n_real_new = len(picked_new_real)
     if len(picked_new_fake) < n_fake_new:
         raise SystemExit(
             f"Not enough new fake videos: need {n_fake_new}, have {len(picked_new_fake)}"
@@ -194,30 +237,38 @@ def main() -> None:
 
     selected: list[dict] = []
     for rel in existing_rels:
+        label, bucket = classify_rel(rel)
         selected.append(
             {
+                "pool_path": rel,
                 "relative_path": rel,
-                "ground_truth_label": classify_rel(rel)[0],
+                "ground_truth_label": label,
                 "subset": "calibration_200",
-                "tamper_type": classify_rel(rel)[1],
+                "tamper_type": bucket,
             }
         )
     for rel in picked_new_real:
+        label, bucket = "real", "original"
+        out = out_rel_for_benchmark(rel, label, bucket)
         selected.append(
             {
-                "relative_path": rel,
-                "ground_truth_label": "real",
+                "pool_path": rel,
+                "relative_path": out,
+                "ground_truth_label": label,
                 "subset": "ood_new",
-                "tamper_type": "original",
+                "tamper_type": bucket,
             }
         )
     for rel in picked_new_fake:
+        label, bucket = classify_rel(rel)
+        out = out_rel_for_benchmark(rel, label, bucket)
         selected.append(
             {
-                "relative_path": rel,
-                "ground_truth_label": "fake",
+                "pool_path": rel,
+                "relative_path": out,
+                "ground_truth_label": label,
                 "subset": "ood_new",
-                "tamper_type": classify_rel(rel)[1],
+                "tamper_type": bucket,
             }
         )
 
@@ -235,7 +286,11 @@ def main() -> None:
                 return cand
         return None
 
-    missing = [s["relative_path"] for s in selected if resolve(s["relative_path"]) is None]
+    missing = []
+    for s in selected:
+        src_rel = s.get("pool_path") or s["relative_path"]
+        if resolve(src_rel) is None:
+            missing.append(src_rel)
     if missing:
         raise SystemExit(f"Missing {len(missing)} videos in pool. First: {missing[:5]}")
 
@@ -246,6 +301,7 @@ def main() -> None:
         "fake": sum(1 for s in selected if s["ground_truth_label"] == "fake"),
         "calibration_subset": n_existing,
         "ood_new_subset": n_need,
+        "ood_imbalanced": args.allow_imbalanced_ood,
         "seed": args.seed,
         "pool_root": str(args.pool_root),
         "train_root_excluded": str(args.train_root),
@@ -254,6 +310,10 @@ def main() -> None:
     }
 
     print(f"pool videos: {len(pool)}  train_ids excluded: {len(train_ids)}")
+    print(
+        f"pool classified: real={len(candidates_real)} "
+        f"fake={sum(len(v) for v in candidates_fake.values())}"
+    )
     print(f"selected: total={len(selected)}  calib={n_existing}  ood_new={n_need}")
     print(f"  real={manifest['real']} fake={manifest['fake']}")
     print(f"  fake types: {manifest['tamper_type_counts']}")
@@ -268,10 +328,10 @@ def main() -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     for s in selected:
-        rel = s["relative_path"]
-        src = resolve(rel)
+        src_rel = s.get("pool_path") or s["relative_path"]
+        src = resolve(src_rel)
         assert src is not None
-        dst = args.out_dir / rel
+        dst = args.out_dir / s["relative_path"]
         symlink_or_copy(src, dst, args.symlink)
 
     (args.out_dir / "manifest.json").write_text(

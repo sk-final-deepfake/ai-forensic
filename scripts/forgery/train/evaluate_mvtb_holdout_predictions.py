@@ -44,7 +44,12 @@ def subset_items(items: list[dict], manifest_path: Path | None, subset: str) -> 
     if not manifest_path or not manifest_path.exists():
         return items
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    rel_to_subset = {x["relative_path"]: x.get("subset", "") for x in manifest.get("items", [])}
+    rel_to_subset: dict[str, str] = {}
+    for x in manifest.get("items", []):
+        sub = x.get("subset", "")
+        rel_to_subset[x.get("relative_path", "")] = sub
+        if x.get("pool_path"):
+            rel_to_subset[x["pool_path"]] = sub
     out = []
     for x in items:
         rel = x.get("relative_path") or x.get("video_rel") or ""

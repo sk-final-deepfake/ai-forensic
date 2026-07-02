@@ -94,7 +94,13 @@ def main() -> None:
         "--skip-out-of-window-fake",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Recipe v4: drop out-of-window frames on middle-tampered fakes (no mask=0 hard neg)",
+        help="Omit out-of-window frames on middle-tampered fakes (no mask=0 hard neg)",
+    )
+    parser.add_argument(
+        "--recipe-tag",
+        type=str,
+        default=None,
+        help="meta.json recipe field (e.g. r2 for Baseline-line; default auto from flags)",
     )
     parser.add_argument("--max-items", type=int, default=0, help="Debug cap (0=all)")
     args = parser.parse_args()
@@ -162,7 +168,13 @@ def main() -> None:
     (out_dir / "train_list.txt").write_text("\n".join(train_lines) + ("\n" if train_lines else ""), encoding="utf-8")
     (out_dir / "valid_list.txt").write_text("\n".join(valid_lines) + ("\n" if valid_lines else ""), encoding="utf-8")
 
-    if args.skip_out_of_window_fake:
+    if args.recipe_tag:
+        recipe = args.recipe_tag
+        note = (
+            f"{recipe}: in-window tampered frames only; "
+            "out-of-window fake frames omitted; all original frames mask=0"
+        )
+    elif args.skip_out_of_window_fake:
         recipe = "v4"
         note = (
             "v4: in-window tampered frames only (mask=255); "

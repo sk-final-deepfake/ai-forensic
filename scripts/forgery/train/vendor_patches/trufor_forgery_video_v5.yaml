@@ -1,0 +1,64 @@
+# ForenShield TruFor video forgery recipe v5 (v4 data + infer-proxy BEST_KEY)
+# Copy to: vendor/TruFor/TruFor_train_test/lib/config/trufor_forgery_video_v5.yaml
+# Use: -exp trufor_forgery_video_v5
+#
+# vs v4: only cause #1 fix — best.pth selected by tampered_pixel_recall
+# (computed in train_trufor_video_forgery.py from validation confusion matrix).
+# Reuse v4 cache: data/processed/trufor-gmflow-train-400-v4 (SKIP_PREPARE=1).
+
+CUDNN:
+  BENCHMARK: false
+  DETERMINISTIC: false
+  ENABLED: false
+WORKERS: 4
+
+DATASET:
+  TRAIN: [FSVIDEO]
+  VALID: [FSVIDEO]
+  NUM_CLASSES: 2
+  CLASS_WEIGHTS: [1.0, 1.5]
+
+MODEL:
+  NAME: detconfcmx
+  PRETRAINED: 'pretrained_models/segformers/mit_b2.pth'
+  MODS: ('RGB','NP++')
+  EXTRA:
+    BACKBONE: mit_b2
+    DECODER: MLPDecoder
+    DECODER_EMBED_DIM: 512
+    PREPRC: 'imagenet'
+    BN_EPS: 0.001
+    BN_MOMENTUM: 0.1
+    NP_WEIGHTS: 'pretrained_models/noiseprint++/noiseprint++.th'
+    MODULES: ['NP++','backbone','loc_head']
+    FIX_MODULES: ['NP++','backbone']
+
+LOSS:
+  LOSSES:
+    - [ 'LOC', 1.0, 'dice_entropy' ]
+  SMOOTH: 0
+
+TRAIN:
+  PRETRAINING: ''
+  RESUME: false
+  IMAGE_SIZE: [512, 512]
+  BATCH_SIZE_PER_GPU: 2
+  SHUFFLE: true
+  BEGIN_EPOCH: 0
+  END_EPOCH: 5
+  OPTIMIZER: sgd
+  LR: 0.0005
+  WD: 0.0005
+  MOMENTUM: 0.9
+  NESTEROV: false
+  IGNORE_LABEL: -1
+  AUG: null
+  NUM_SAMPLES: 0
+
+VALID:
+  FIRST_VALID: false
+  MAX_SIZE: 1024
+  # Infer-proxy: tampered-class pixel recall (not background-dominated avg_p-F1).
+  # Fallback chain in train_trufor_video_forgery.py if KeyError.
+  BEST_KEY: 'tampered_pixel_recall'
+  AUG: null

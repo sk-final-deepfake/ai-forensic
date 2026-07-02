@@ -52,6 +52,49 @@ def _ensure_trufor_path() -> None:
     os.chdir(trufor)
 
 
+# Cause #1: pixel avg_p-F1 dominates background; infer uses video tamper_score / fake recall.
+# Custom keys are injected after vendor validate() from the confusion matrix.
+_INFER_PROXY_BEST_KEYS = (
+    "tampered_pixel_recall",
+    "tampered_pixel_f1",
+    "avg_IoU_1_smooth",
+    "avg_p-mIoU_smooth",
+    "avg_p-F1",
+    "avg_p-F1_smooth",
+    "loss",
+)
+
+
+def _enrich_infer_proxy_metrics(value_valid: dict, confusion_matrix: np.ndarray) -> dict:
+    """Add tampered-class metrics aligned with infer recall more than avg_p-F1."""
+    cm = np.asarray(confusion_matrix, dtype=np.float64)
+    tp = cm[1, 1]
+    fn = cm[1, 0]
+    fp = cm[0, 1]
+    gt_pos = cm[1].sum()
+    pred_pos = cm[:, 1].sum()
+
+    enriched = dict(value_valid)
+    enriched["tampered_pixel_recall"] = float(tp / max(gt_pos, 1.0))
+    enriched["tampered_pixel_precision"] = float(tp / max(pred_pos, 1.0))
+    enriched["tampered_pixel_f1"] = float(2 * tp / max(2 * tp + fn + fp, 1.0))
+    return enriched
+
+
+def _resolve_best_key(requested: str, value_valid: dict) -> tuple[str, str | None]:
+    if requested in value_valid:
+        return requested, None
+    for key in _INFER_PROXY_BEST_KEYS:
+        if key in value_valid:
+            return key, f"BEST_KEY '{requested}' not in validation metrics; using '{key}'"
+    available = ", ".join(sorted(value_valid))
+    raise KeyError(f"BEST_KEY '{requested}' not found. Available: {available}")
+
+
+def _is_loss_metric(key: str) -> bool:
+    return "loss" in key
+
+
 def _register_fsvideo_dataset(cache_root: Path, train_list: Path, valid_list: Path) -> None:
     """Register FSVIDEO without editing data_core.py when patch not applied."""
     import dataset.data_core as data_core
@@ -273,8 +316,10 @@ def main() -> None:
     model = FullModel(model, config)
     optimizer = get_optimizer(model, config)
 
-    best_key = config.VALID.BEST_KEY
-    best_value = np.inf if "loss" in best_key else 0
+    requested_best_key = config.VALID.BEST_KEY
+    best_value = np.inf if _is_loss_metric(requested_best_key) else 0
+    if requested_best_key in _INFER_PROXY_BEST_KEYS[:3]:
+        logger.info("Using infer-proxy BEST_KEY=%s", requested_best_key)
 
     if config.TRAIN.PRETRAINING:
         ckpt_path = config.TRAIN.PRETRAINING
@@ -294,7 +339,10 @@ def main() -> None:
         if os.path.isfile(resume_path):
             checkpoint = _torch_load_checkpoint(resume_path)
             best_value = checkpoint["best_value"]
-            assert checkpoint["best_key"] == best_key
+            ckpt_best_key = checkpoint.get("requested_best_key", checkpoint.get("best_key"))
+            assert ckpt_best_key == requested_best_key, (
+                f"Resume BEST_KEY mismatch: checkpoint={ckpt_best_key}, config={requested_best_key}"
+            )
             last_epoch = int(checkpoint["epoch"])
             model.model.module.load_state_dict(checkpoint["state_dict"])
             optimizer.load_state_dict(checkpoint["optimizer"])
@@ -330,26 +378,41 @@ def main() -> None:
         logging.info("VALIDATION epoch %s", epoch)
         writer_dict["valid_global_steps"] = epoch
         value_valid, iou_array, confusion_matrix = validate(config, validloader, model, writer_dict, "valid")
+        value_valid = _enrich_infer_proxy_metrics(value_valid, confusion_matrix)
 
-        if "loss" in best_key:
-            improved = value_valid[best_key] < best_value
+        effective_key, fallback_msg = _resolve_best_key(requested_best_key, value_valid)
+        if fallback_msg:
+            logger.warning(fallback_msg)
+
+        metric_value = value_valid[effective_key]
+        if _is_loss_metric(effective_key):
+            improved = metric_value < best_value
         else:
-            improved = value_valid[best_key] > best_value
+            improved = metric_value > best_value
         if improved:
-            best_value = value_valid[best_key]
+            best_value = metric_value
             torch.save(
                 {
                     "epoch": epoch + 1,
                     "best_value": best_value,
-                    "best_key": best_key,
+                    "best_key": effective_key,
+                    "requested_best_key": requested_best_key,
                     "state_dict": model.model.module.state_dict(),
                     "optimizer": optimizer.state_dict(),
                 },
                 os.path.join(final_output_dir, "best.pth.tar"),
             )
-            logger.info("best.pth.tar updated (%s=%s)", best_key, best_value)
+            logger.info("best.pth.tar updated (%s=%.6f)", effective_key, best_value)
 
-        logger.info("Valid loss=%.4f best_%s=%.4f", value_valid["loss"], best_key, best_value)
+        logger.info(
+            "infer_proxy recall=%.4f precision=%.4f f1=%.4f IoU1_smooth=%.4f avg_p-F1=%.4f",
+            value_valid["tampered_pixel_recall"],
+            value_valid["tampered_pixel_precision"],
+            value_valid["tampered_pixel_f1"],
+            value_valid.get("avg_IoU_1_smooth", float("nan")),
+            value_valid.get("avg_p-F1", float("nan")),
+        )
+        logger.info("Valid loss=%.4f best_%s=%.6f", value_valid["loss"], effective_key, best_value)
         logger.info("%s", iou_array)
         logger.info("confusion_matrix: %s", confusion_matrix)
 
@@ -357,7 +420,8 @@ def main() -> None:
             {
                 "epoch": epoch + 1,
                 "best_value": best_value,
-                "best_key": best_key,
+                "best_key": effective_key,
+                "requested_best_key": requested_best_key,
                 "state_dict": model.model.module.state_dict(),
                 "optimizer": optimizer.state_dict(),
             },

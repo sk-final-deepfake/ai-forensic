@@ -1,11 +1,11 @@
-# DEPRECATED — use run_trufor_forgery_train_r1.sh
 #!/usr/bin/env bash
-# ForenShield TruFor recipe v5 (R1) — baseline line + cause #1 BEST_KEY only
+# Baseline-line R1 — cause #1 BEST_KEY only (NOT Legacy v4 path)
 # Usage (from ~/forenShield-ai/forgery):
-#   sed -i 's/\r$//' scripts/train/run_trufor_forgery_train_v5.sh
-#   bash scripts/train/run_trufor_forgery_train_v5.sh
+#   sed -i 's/\r$//' scripts/train/run_trufor_forgery_train_r1.sh
+#   bash scripts/train/run_trufor_forgery_train_r1.sh
 #
-# NOT built on v4. Compare @0.5 to baseline + v2 smoke (same v2 cache/HP, old BEST_KEY).
+# EXP_NAME: forgery-r1-* (never reuse forgery-v2-smoke-* / v4 names)
+# Compare @0.5: baseline + Legacy v2 smoke
 
 set -euo pipefail
 
@@ -16,9 +16,9 @@ source "${HOME}/forenShield-ai/.venv/bin/activate"
 
 DATA_ROOT="${ROOT}/data/train/video/forgery-gmflow-train-400"
 CACHE_ROOT="${ROOT}/data/processed/trufor-gmflow-train-400-v2"
-EXP_NAME="${EXP_NAME:-forgery-v5-r1-$(date +%Y%m%d-%H%M)}"
+EXP_NAME="${EXP_NAME:-forgery-r1-$(date +%Y%m%d-%H%M)}"
 GPU="${GPU:-0}"
-CONFIG_EXP="${CONFIG_EXP:-trufor_forgery_video_v5}"
+CONFIG_EXP="${CONFIG_EXP:-trufor_forgery_video_r1}"
 BATCH_SIZE="${BATCH_SIZE:-2}"
 WORKERS="${WORKERS:-2}"
 SKIP_PREPARE="${SKIP_PREPARE:-1}"
@@ -27,7 +27,7 @@ INFER_THRESHOLD="${INFER_THRESHOLD:-0.5}"
 PRETRAINED="${PRETRAINED:-${ROOT}/models/test/spatial/trufor/v1.0.0/trufor.pth.tar}"
 
 if [[ "$SKIP_PREPARE" != "1" ]]; then
-  echo "[1/5] prepare frames (recipe v2: middle window)"
+  echo "[1/5] prepare frames (v2 cache layout — same as Legacy v2)"
   python3 scripts/train/prepare_trufor_video_frames.py \
     --data-root "$DATA_ROOT" \
     --out-dir "$CACHE_ROOT" \
@@ -47,12 +47,12 @@ if [[ ! -f "$PATCH_DST" ]]; then
   echo "copied $PATCH_DST"
 fi
 
-CFG_SRC="scripts/train/vendor_patches/trufor_forgery_video_v5.yaml"
-CFG_DST="vendor/TruFor/TruFor_train_test/lib/config/trufor_forgery_video_v5.yaml"
+CFG_SRC="scripts/train/vendor_patches/trufor_forgery_video_r1.yaml"
+CFG_DST="vendor/TruFor/TruFor_train_test/lib/config/trufor_forgery_video_r1.yaml"
 cp "$CFG_SRC" "$CFG_DST"
 echo "copied $CFG_DST"
 
-echo "[3/5] train (R1: v2 HP + BEST_KEY=tampered_pixel_recall, batch=$BATCH_SIZE, gpu=$GPU)"
+echo "[3/5] train R1 (v2 HP + BEST_KEY=tampered_pixel_recall, batch=$BATCH_SIZE, gpu=$GPU)"
 if command -v nvidia-smi >/dev/null 2>&1; then
   nvidia-smi --query-gpu=index,memory.used,memory.free --format=csv,noheader | sed "s/^/  GPU /" || true
 fi
@@ -97,9 +97,9 @@ python3 scripts/infer/spatial_mvtamperbench_benchmark.py \
 
 MVTB_PRED="results/infer/trufor-mvtb200-${EXP_NAME}-${RUN_DATE}/predictions.json"
 echo ""
-echo "=== R1 gate @${INFER_THRESHOLD} — compare to baseline + v2 smoke, NOT v4 ==="
-echo "  baseline @0.5: mvtb TP63 FP51 | csvted TP24 FP11"
-echo "  v2 smoke @0.5: mvtb TP14 FP4  | csvted TP0  FP1"
+echo "=== R1 gate @${INFER_THRESHOLD} ==="
+echo "  baseline @0.5:     mvtb TP63 FP51 | csvted TP24 FP11"
+echo "  Legacy v2 @0.5:   mvtb TP14 FP4  | csvted TP0  FP1"
 echo "  cat results/infer/trufor-mvtb200-${EXP_NAME}-${RUN_DATE}/metrics.json"
 echo ""
 echo "=== threshold sweep ==="

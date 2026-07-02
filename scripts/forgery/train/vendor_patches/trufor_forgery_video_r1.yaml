@@ -1,11 +1,10 @@
-# DEPRECATED — use trufor_forgery_video_r1.yaml (Baseline-line R1). Legacy naming only.
-# ForenShield TruFor video forgery recipe v5 — baseline line, cause #1 only
-# Copy to: vendor/TruFor/TruFor_train_test/lib/config/trufor_forgery_video_v5.yaml
-# Use: -exp trufor_forgery_video_v5
+# Baseline-line R1 — cause #1 only (BEST_KEY infer proxy)
+# Copy to: vendor/TruFor/TruFor_train_test/lib/config/trufor_forgery_video_r1.yaml
+# Use: -exp trufor_forgery_video_r1
 #
-# Same HP as recipe v2 smoke; ONLY change vs v2 yaml: VALID.BEST_KEY.
-# Pair with v2 prepare cache (middle window): trufor-gmflow-train-400-v2
-# Compare infer @0.5 to: (1) baseline weights (2) v2 smoke (avg_p-F1 best).
+# HP = Legacy v2 smoke (frozen reference). ONLY delta: VALID.BEST_KEY.
+# Cache: data/processed/trufor-gmflow-train-400-v2 (reuse, do not rebuild unless missing)
+# Compare @0.5: baseline infer + Legacy forgery-v2-smoke-* (avg_p-F1 best)
 
 CUDNN:
   BENCHMARK: false

@@ -1,10 +1,10 @@
-# Baseline-line R0 — default fine-tune from models/test checkpoint
-# Copy to: vendor/TruFor/TruFor_train_test/lib/config/trufor_forgery_video_r0.yaml
-# Use: -exp trufor_forgery_video_r0
+# Baseline-line R4 — cause #5 only (END_EPOCH increase)
+# Copy to: vendor/TruFor/TruFor_train_test/lib/config/trufor_forgery_video_r4.yaml
+# Use: -exp trufor_forgery_video_r4
 #
-# Shared training HP for Baseline-line (R1~R4). NOT Legacy v2~v5 yaml.
-# Start weights: models/test/spatial/trufor/v1.0.0/trufor.pth.tar (via train script --pretrained-checkpoint)
-# Data: per-run cache (R3 = oversample only; R4 = default prepare only)
+# Independent from R1/R2/R3/Legacy. Start: models/test checkpoint.
+# vs r0 (3ep smoke): ONLY TRAIN.END_EPOCH differs (default 8).
+# Data: default middle-window prepare, NO oversample, NO skip-OOW.
 
 CUDNN:
   BENCHMARK: false
@@ -45,7 +45,7 @@ TRAIN:
   BATCH_SIZE_PER_GPU: 2
   SHUFFLE: true
   BEGIN_EPOCH: 0
-  END_EPOCH: 3
+  END_EPOCH: 8
   OPTIMIZER: sgd
   LR: 0.001
   WD: 0.0005

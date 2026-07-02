@@ -25,7 +25,8 @@ $files = @(
     "run_trufor_forgery_train_v4.sh",
     "run_trufor_forgery_train_r1.sh",
     "run_trufor_forgery_train_r2.sh",
-    "run_trufor_forgery_train_r3.sh"
+    "run_trufor_forgery_train_r3.sh",
+    "run_trufor_forgery_train_r4.sh"
 )
 
 $patches = @(
@@ -36,7 +37,8 @@ $patches = @(
     "trufor_forgery_video_v4.yaml",
     "trufor_forgery_video_r1.yaml",
     "trufor_forgery_video_r2.yaml",
-    "trufor_forgery_video_r0.yaml"
+    "trufor_forgery_video_r0.yaml",
+    "trufor_forgery_video_r4.yaml"
 )
 
 function Resolve-LocalPaths([string[]]$Names, [string]$SubDir) {
@@ -71,12 +73,12 @@ scp -r $patchDir "${Remote}:${RemoteTrain}/"
 
 Write-Host "[3/3] verify on server ..."
 ssh $Remote @"
-ls -la ${RemoteTrain}/run_trufor_forgery_train_r3.sh ${RemoteTrain}/prepare_trufor_video_frames.py ${RemoteTrain}/vendor_patches/trufor_forgery_video_r0.yaml
+ls -la ${RemoteTrain}/run_trufor_forgery_train_r4.sh ${RemoteTrain}/vendor_patches/trufor_forgery_video_r4.yaml
 python3 -m py_compile ${RemoteTrain}/prepare_trufor_video_frames.py && echo 'prepare_trufor_video_frames.py: syntax OK'
 "@
 
 Write-Host ""
 Write-Host "Done. On GPU:"
 Write-Host "  cd ~/forenShield-ai/forgery && source ../.venv/bin/activate"
-Write-Host "  sed -i 's/\r$//' scripts/train/run_trufor_forgery_train_r3.sh"
-Write-Host "  bash scripts/train/run_trufor_forgery_train_r3.sh"
+Write-Host "  sed -i 's/\r$//' scripts/train/run_trufor_forgery_train_r4.sh"
+Write-Host "  bash scripts/train/run_trufor_forgery_train_r4.sh"

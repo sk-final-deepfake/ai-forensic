@@ -117,6 +117,12 @@ def run_trufor_on_frames(
     model_file: Path,
 ) -> None:
     npz_out_dir.mkdir(parents=True, exist_ok=True)
+    trufor_root = trufor_test_py.parent
+    config_yaml = trufor_root / "lib" / "config" / f"{experiment}.yaml"
+    if not config_yaml.exists():
+        raise FileNotFoundError(
+            f"Missing TruFor config: {config_yaml} (run test.py from TruFor_train_test cwd)"
+        )
 
     cmd = [
         sys.executable,
@@ -124,15 +130,16 @@ def run_trufor_on_frames(
         "-g",
         str(gpu),
         "-in",
-        str(frames_root),
+        str(frames_root.resolve()),
         "-out",
-        str(npz_out_dir),
+        str(npz_out_dir.resolve()),
         "-exp",
         experiment,
         "TEST.MODEL_FILE",
-        str(model_file),
+        str(model_file.resolve()),
     ]
-    subprocess.run(cmd, check=True)
+    # test.py loads lib/config/<exp>.yaml relative to TruFor_train_test cwd.
+    subprocess.run(cmd, check=True, cwd=trufor_root)
 
 
 def video_score_from_npz(video_npz_dir: Path) -> float:

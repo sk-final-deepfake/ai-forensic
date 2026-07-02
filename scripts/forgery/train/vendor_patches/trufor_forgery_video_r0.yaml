@@ -1,13 +1,10 @@
-# Baseline-line R3 — cause #2 only (in-window positive oversample in train_list)
-# Copy to: vendor/TruFor/TruFor_train_test/lib/config/trufor_forgery_video_r3.yaml
-# Use: -exp trufor_forgery_video_r3
+# Baseline-line R0 — default fine-tune from models/test checkpoint
+# Copy to: vendor/TruFor/TruFor_train_test/lib/config/trufor_forgery_video_r0.yaml
+# Use: -exp trufor_forgery_video_r0
 #
-# Independent from R1/R2/Legacy (separate cache / run_name).
-# Prepare: --require-middle-window (v2 layout, hard neg KEPT)
-#          --oversample-positive 3 --recipe-tag r3
-#          NO --skip-out-of-window-fake (R2와 무관)
-# Cache:  data/processed/trufor-gmflow-train-400-r3
-# HP: v2 smoke 동일 (3ep, BEST_KEY=avg_p-F1); 데이터는 oversample만 추가
+# Shared training HP for Baseline-line (R1~R4). NOT Legacy v2~v5 yaml.
+# Start weights: models/test/spatial/trufor/v1.0.0/trufor.pth.tar (via train script --pretrained-checkpoint)
+# Data: per-run cache (R3 = default prepare + --oversample-positive only)
 
 CUDNN:
   BENCHMARK: false

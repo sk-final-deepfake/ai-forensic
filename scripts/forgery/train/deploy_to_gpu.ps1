@@ -36,7 +36,7 @@ $patches = @(
     "trufor_forgery_video_v4.yaml",
     "trufor_forgery_video_r1.yaml",
     "trufor_forgery_video_r2.yaml",
-    "trufor_forgery_video_r3.yaml"
+    "trufor_forgery_video_r0.yaml"
 )
 
 function Resolve-LocalPaths([string[]]$Names, [string]$SubDir) {
@@ -71,7 +71,7 @@ scp -r $patchDir "${Remote}:${RemoteTrain}/"
 
 Write-Host "[3/3] verify on server ..."
 ssh $Remote @"
-ls -la ${RemoteTrain}/run_trufor_forgery_train_r3.sh ${RemoteTrain}/prepare_trufor_video_frames.py ${RemoteTrain}/vendor_patches/trufor_forgery_video_r3.yaml
+ls -la ${RemoteTrain}/run_trufor_forgery_train_r3.sh ${RemoteTrain}/prepare_trufor_video_frames.py ${RemoteTrain}/vendor_patches/trufor_forgery_video_r0.yaml
 python3 -m py_compile ${RemoteTrain}/prepare_trufor_video_frames.py && echo 'prepare_trufor_video_frames.py: syntax OK'
 "@
 

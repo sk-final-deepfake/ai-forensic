@@ -3,20 +3,18 @@
 
 Output layout (under --out-dir):
   frames/<cache_name>.jpg
-  masks/<cache_name>.png   # 0=negative, 255=in-window tampered (recipe v2)
+  masks/<cache_name>.png   # 0=negative, 255=in-window tampered
   train_list.txt           # rgb_path,mask_path per line (relative to out-dir)
   valid_list.txt
   meta.json
 
-Recipe v2 (default): spatial + middle_tampered only; in-window mask=255,
-out-of-window fake frames mask=0 (hard negative). Non-middle spatial videos skipped.
+Default prepare (--require-middle-window): spatial middle_tampered only;
+in-window mask=255, out-of-window fake mask=0. Non-middle spatial videos skipped.
 
-Recipe v4 (--skip-out-of-window-fake): in-window tampered frames only; out-of-window
-frames on fake videos are omitted from train/valid lists (no hard negative).
+Legacy skip-OOW (--skip-out-of-window-fake): omit OOW fake frames from lists (R2 / v4).
 
-Recipe r3 (Baseline-line, cause #2): v2 layout (hard negatives kept) + duplicate each
-in-window positive (label=1) line in train_list.txt (--oversample-positive N; default 3).
-Independent from R2 (cause #3 skip-OOW).
+Baseline-line R3 (--oversample-positive N): default prepare + duplicate in-window
+positive (label=1) lines in train_list (N total appearances per positive; default 3).
 """
 from __future__ import annotations
 
@@ -197,8 +195,8 @@ def main() -> None:
             )
         elif args.require_middle_window:
             note = (
-                f"{recipe}: v2 layout — mask=255 in-window, OOW fake mask=0 (hard neg); "
-                "all original frames mask=0"
+                f"{recipe}: default middle-window spatial prepare; "
+                "in-window mask=255, OOW fake mask=0; original mask=0"
             )
         else:
             note = f"{recipe}: custom prepare flags"

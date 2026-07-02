@@ -13,6 +13,10 @@ out-of-window fake frames mask=0 (hard negative). Non-middle spatial videos skip
 
 Recipe v4 (--skip-out-of-window-fake): in-window tampered frames only; out-of-window
 frames on fake videos are omitted from train/valid lists (no hard negative).
+
+Recipe r3 (Baseline-line, cause #2): v2 layout (hard negatives kept) + duplicate each
+in-window positive (label=1) line in train_list.txt (--oversample-positive N; default 3).
+Independent from R2 (cause #3 skip-OOW).
 """
 from __future__ import annotations
 
@@ -100,10 +104,18 @@ def main() -> None:
         "--recipe-tag",
         type=str,
         default=None,
-        help="meta.json recipe field (e.g. r2 for Baseline-line; default auto from flags)",
+        help="meta.json recipe field (e.g. r2, r3 for Baseline-line; default auto from flags)",
+    )
+    parser.add_argument(
+        "--oversample-positive",
+        type=int,
+        default=1,
+        help="Repeat each in-window positive (label=1) train line N times total (1=no-op, 3=2 extra copies)",
     )
     parser.add_argument("--max-items", type=int, default=0, help="Debug cap (0=all)")
     args = parser.parse_args()
+    if args.oversample_positive < 1:
+        parser.error("--oversample-positive must be >= 1")
 
     data_root = args.data_root.resolve()
     out_dir = args.out_dir.resolve()
@@ -127,6 +139,8 @@ def main() -> None:
     masks_dir = out_dir / "masks"
     train_lines: list[str] = []
     valid_lines: list[str] = []
+    train_positive_lines = 0
+    train_positive_copies = 0
     label_counter = Counter()
     skipped = 0
 
@@ -162,6 +176,12 @@ def main() -> None:
             valid_lines.append(line)
         else:
             train_lines.append(line)
+            if plan.label == 1:
+                train_positive_lines += 1
+                extra = args.oversample_positive - 1
+                if extra > 0:
+                    train_lines.extend([line] * extra)
+                    train_positive_copies += extra
         label_counter[plan.label] += 1
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -170,10 +190,20 @@ def main() -> None:
 
     if args.recipe_tag:
         recipe = args.recipe_tag
-        note = (
-            f"{recipe}: in-window tampered frames only; "
-            "out-of-window fake frames omitted; all original frames mask=0"
-        )
+        if args.skip_out_of_window_fake:
+            note = (
+                f"{recipe}: in-window tampered frames only; "
+                "out-of-window fake frames omitted; all original frames mask=0"
+            )
+        elif args.require_middle_window:
+            note = (
+                f"{recipe}: v2 layout — mask=255 in-window, OOW fake mask=0 (hard neg); "
+                "all original frames mask=0"
+            )
+        else:
+            note = f"{recipe}: custom prepare flags"
+        if args.oversample_positive > 1:
+            note += f"; train in-window positive oversample x{args.oversample_positive}"
     elif args.skip_out_of_window_fake:
         recipe = "v4"
         note = (
@@ -199,6 +229,9 @@ def main() -> None:
         "include_temporal_fakes": args.include_temporal_fakes,
         "require_middle_tamper_window": args.require_middle_window,
         "skip_out_of_window_fake": args.skip_out_of_window_fake,
+        "oversample_positive": args.oversample_positive,
+        "train_positive_unique": train_positive_lines,
+        "train_positive_extra_copies": train_positive_copies,
         "train_frames": len(train_lines),
         "valid_frames": len(valid_lines),
         "train_videos": len(train_videos),

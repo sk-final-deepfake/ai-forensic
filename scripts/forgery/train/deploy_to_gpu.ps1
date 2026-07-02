@@ -28,7 +28,20 @@ $files = @(
     "run_trufor_forgery_train_r3.sh",
     "run_trufor_forgery_train_r4.sh",
     "run_trufor_forgery_train_r5.sh",
+    "run_trufor_forgery_train_r5_calibrated.sh",
+    "spatial_benchmark_calibrate_from_predictions.py",
+    "discover_mvtb_video_pools.py",
+    "evaluate_mvtb_holdout_predictions.py",
+    "prepare_mvtb_holdout_benchmark.py",
+    "run_mvtb500_holdout_eval.sh",
+    "record_r3_mvtb_dev_adoption.sh",
+    "record_r5_mvtb_dev_adoption.sh",
     "trufor_deepfake_benchmark_infer.py"
+)
+
+$configFiles = @(
+    "trufor_r3_mvtb_dev_calibration.json",
+    "trufor_r5_mvtb_dev_calibration.json"
 )
 
 $patches = @(
@@ -57,7 +70,7 @@ function Resolve-LocalPaths([string[]]$Names, [string]$SubDir) {
 }
 
 Write-Host "Deploy TruFor train scripts to $Remote"
-Write-Host "Password: up to 3 times (scripts batch, patches batch, verify). Use SSH key to skip."
+Write-Host "Password: up to 4 times (scripts, config, patches, verify). Use SSH key to skip."
 Write-Host ""
 
 $mainPaths = Resolve-LocalPaths $files ""
@@ -67,14 +80,26 @@ foreach ($patch in $patches) {
     $null = Resolve-LocalPaths @($patch) "vendor_patches"
 }
 
-Write-Host "[1/3] scp train scripts ($($mainPaths.Count) files) ..."
+Write-Host "[1/4] scp train scripts ($($mainPaths.Count) files) ..."
 scp @mainPaths "${Remote}:${RemoteTrain}/"
 
-Write-Host "[2/3] scp vendor_patches/ ..."
+Write-Host "[2/4] scp config/forgery/ ..."
+$aiForensicRoot = (Resolve-Path (Join-Path $LocalDir "..\..\..")).Path
+$configDir = Join-Path $aiForensicRoot "config\forgery"
+$configPaths = @()
+foreach ($name in $configFiles) {
+    $src = Join-Path $configDir $name
+    if (-not (Test-Path $src)) { throw "Missing local file: $src" }
+    $configPaths += $src
+}
+ssh $Remote "mkdir -p ~/forenShield-ai/forgery/config/forgery"
+scp @configPaths "${Remote}:~/forenShield-ai/forgery/config/forgery/"
+
+Write-Host "[3/4] scp vendor_patches/ ..."
 $patchDir = Join-Path $LocalDir "vendor_patches"
 scp -r $patchDir "${Remote}:${RemoteTrain}/"
 
-Write-Host "[3/3] verify on server ..."
+Write-Host "[4/4] verify on server ..."
 ssh $Remote @"
 ls -la ${RemoteTrain}/run_trufor_forgery_train_r5.sh ${RemoteTrain}/vendor_patches/trufor_forgery_video_r5.yaml ${RemoteTrain}/trufor_deepfake_benchmark_infer.py
 python3 -m py_compile ${RemoteTrain}/prepare_trufor_video_frames.py && echo 'prepare_trufor_video_frames.py: syntax OK'
@@ -84,5 +109,5 @@ python3 -m py_compile ${RemoteTrain}/trufor_deepfake_benchmark_infer.py && echo 
 Write-Host ""
 Write-Host "Done. On GPU:"
 Write-Host "  cd ~/forenShield-ai/forgery && source ../.venv/bin/activate"
-Write-Host "  sed -i 's/\r$//' scripts/train/run_trufor_forgery_train_r5.sh"
-Write-Host "  bash scripts/train/run_trufor_forgery_train_r5.sh"
+Write-Host "  sed -i 's/\r$//' scripts/train/record_r5_mvtb_dev_adoption.sh"
+Write-Host "  bash scripts/train/record_r5_mvtb_dev_adoption.sh"

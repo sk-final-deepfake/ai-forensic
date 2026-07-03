@@ -1,0 +1,65 @@
+# Baseline-line R5 — combined R1+R2+R3 (+ R4 epoch default)
+# Copy to: vendor/TruFor/TruFor_train_test/lib/config/trufor_forgery_video_r5.yaml
+# Use: -exp trufor_forgery_video_r5
+#
+# Stacks (vs baseline, single run):
+#   R1 #1: BEST_KEY=tampered_pixel_recall
+#   R2 #3: prepare --skip-out-of-window-fake (in run script)
+#   R3 #2: prepare --oversample-positive 3 (in run script)
+#   R4 #5: END_EPOCH=8 (override via env)
+# Start: models/test checkpoint. NOT Legacy v2~v5.
+
+CUDNN:
+  BENCHMARK: false
+  DETERMINISTIC: false
+  ENABLED: false
+WORKERS: 4
+
+DATASET:
+  TRAIN: [FSVIDEO]
+  VALID: [FSVIDEO]
+  NUM_CLASSES: 2
+  CLASS_WEIGHTS: [1.0, 1.5]
+
+MODEL:
+  NAME: detconfcmx
+  PRETRAINED: 'pretrained_models/segformers/mit_b2.pth'
+  MODS: ('RGB','NP++')
+  EXTRA:
+    BACKBONE: mit_b2
+    DECODER: MLPDecoder
+    DECODER_EMBED_DIM: 512
+    PREPRC: 'imagenet'
+    BN_EPS: 0.001
+    BN_MOMENTUM: 0.1
+    NP_WEIGHTS: 'pretrained_models/noiseprint++/noiseprint++.th'
+    MODULES: ['NP++','backbone','loc_head']
+    FIX_MODULES: ['NP++']
+
+LOSS:
+  LOSSES:
+    - [ 'LOC', 1.0, 'dice_entropy' ]
+  SMOOTH: 0
+
+TRAIN:
+  PRETRAINING: ''
+  RESUME: false
+  IMAGE_SIZE: [512, 512]
+  BATCH_SIZE_PER_GPU: 2
+  SHUFFLE: true
+  BEGIN_EPOCH: 0
+  END_EPOCH: 8
+  OPTIMIZER: sgd
+  LR: 0.001
+  WD: 0.0005
+  MOMENTUM: 0.9
+  NESTEROV: false
+  IGNORE_LABEL: -1
+  AUG: null
+  NUM_SAMPLES: 0
+
+VALID:
+  FIRST_VALID: false
+  MAX_SIZE: 1024
+  BEST_KEY: 'tampered_pixel_recall'
+  AUG: null

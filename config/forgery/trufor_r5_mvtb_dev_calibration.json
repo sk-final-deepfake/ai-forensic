@@ -1,0 +1,46 @@
+{
+  "model": "trufor",
+  "modality": "spatial",
+  "version": "v1.0.0",
+  "run_name": "forgery-r5-20260702-0722",
+  "adopted_at": "2026-07-02",
+  "status": "dev_adopted",
+  "scope": "mvtb_only",
+  "supersedes": "forgery-r3-20260702-0338",
+  "strategy": "R5_combined_training + Phase0_mvtb_gate_calibration",
+  "checkpoint": "models/dev/spatial/trufor/v1.0.0/forgery-r5-20260702-0722/trufor.pth.tar",
+  "pretrain": "models/test/spatial/trufor/v1.0.0/trufor.pth.tar",
+  "cache": "data/processed/trufor-gmflow-train-400-r5",
+  "config_exp": "trufor_forgery_video_r5",
+  "models_test": "not_promoted",
+  "models_deploy": "not_promoted",
+  "benchmarks": {
+    "mvtb": {
+      "adopted": true,
+      "dataset": "data/pull/evidence/mvtamperbench-200-s3",
+      "threshold": 0.185,
+      "run_id": "trufor-mvtb200-forgery-r5-20260702-0722-20260702-0722",
+      "metrics_path": "results/infer/trufor-mvtb200-forgery-r5-20260702-0722-20260702-0722/metrics.json",
+      "predictions_path": "results/infer/trufor-mvtb200-forgery-r5-20260702-0722-20260702-0722/predictions.json",
+      "confusion": { "tp": 96, "tn": 81, "fp": 19, "fn": 4 },
+      "accuracy": 0.885,
+      "roc_auc": 0.8805,
+      "gate": "TP>=63 & FP<=51",
+      "gate_pass": true,
+      "vs_baseline_at_0_5": { "tp": "63->96", "fp": "51->19", "accuracy": "0.560->0.885" },
+      "vs_r3_dev_at_calibrated": { "tp": "95->96", "fp": "37->19", "accuracy": "0.790->0.885", "r3_threshold": 0.158 }
+    },
+    "csvted": {
+      "adopted": false,
+      "note": "TruFor spatial 단독 한계 — temporal/fusion 별도. mvtb thr(0.185) 공유 금지.",
+      "optional_threshold_fp_le_11": 0.28,
+      "optional_confusion": { "tp": 5, "tn": 91, "fp": 9, "fn": 95 },
+      "run_id": "trufor-csvted200-forgery-r5-20260702-0722-20260702-0722"
+    }
+  },
+  "deferred": {
+    "csvted_trufor_threshold": "fusion_or_gmflow",
+    "models_test_promote": "team_review"
+  },
+  "doc": "docs/ai/17-TruFor-v5-원인1-BEST_KEY-개선-실험.md §9.19"
+}

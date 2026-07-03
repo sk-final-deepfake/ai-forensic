@@ -7,214 +7,322 @@
 
 | 위치 | 역할 |
 |------|------|
-| `~/forenShield-ai` (GPU) | 모델 test/dev/deploy, 데이터, infer/eval, S3 sync |
+| `~/forenShield-ai` (GPU) | 공통 venv·config, **deepfake** / **forgery** 2트랙 |
+| `~/forenShield-ai/deepfake` | **1차 딥페이크** 모델·데이터·infer/eval |
+| `~/forenShield-ai/forgery` | **2차 위변조** TruFor·GMFlow(컷)·DC·region 프로파일 |
 | `ai-forensic` (Git) | FastAPI `/ai/analyze`, Celery Worker, 배포용 서비스 코드 |
-| S3 `forenshield-models-*` | `models/deploy/` 와 1:1 대응하는 배포 가중치 |
+| S3 `forenshield-models-*` | `*/deploy/` 와 1:1 대응하는 배포 가중치 |
 | S3 `forenshield-evidence-*` | 분석용 증거 copy (pull 테스트 입력) |
 
-## 디렉터리 트리
+## 트랙 선택 (환경변수)
+
+스크립트는 `FORENSHIELD_AI_ROOT`를 트랙 루트로 사용합니다.
+
+```bash
+cd ~/forenShield-ai
+source .venv/bin/activate
+
+# 1차 딥페이크
+export FORENSHIELD_TRACK=deepfake
+export FORENSHIELD_AI_ROOT="$HOME/forenShield-ai/deepfake"
+
+# 2차 위변조
+export FORENSHIELD_TRACK=forgery
+export FORENSHIELD_AI_ROOT="$HOME/forenShield-ai/forgery"
+```
+
+`env.local`에 넣어 두고 `source config/env.local` 해도 됩니다.
+
+---
+
+## 디렉터리 트리 (전체)
 
 ```text
 ~/forenShield-ai/
-├── .venv/                         # Python 3.12 가상환경
-├── README.md                      # 워크스테이션 로컬 안내
+├── .venv/                         # Python 3.12 — deepfake·forgery 공통
+├── README.md
 │
-├── config/
-│   ├── env.local                  # AWS_PROFILE, 리전 등 (git 제외)
+├── config/                        # 트랙 공통 설정
+│   ├── env.local
 │   ├── env.local.example
-│   ├── models.yaml                # 모델별 test/dev/deploy 경로·S3 prefix
-│   └── buckets.yaml               # evidence·models 버킷·prefix
+│   ├── buckets.yaml
+│   ├── models.deepfake.yaml       # 1차 모델 레지스트리
+│   └── models.forgery.yaml        # 2차 모델·프로파일 레지스트리
 │
-├── models/                        # AI 가중치 (.pth, .bin 등)
-│   ├── test/                      # 테스트용 — 실험·초기 다운로드
-│   ├── dev/                       # 개발용 — 튜닝·통합·1차 검증 통과본
-│   └── deploy/                    # 배포용 — S3 업로드 원본 (운영 확정)
+├── deepfake/                      # ===== 1차 딥페이크 =====
+│   ├── models/
+│   │   ├── test/
+│   │   │   ├── video/xception|convnext|videomae|timesformer|video-swin/v1.0.0/
+│   │   │   └── optical/gmflow|raft|pwcnet/
+│   │   ├── dev/
+│   │   └── deploy/
+│   ├── data/
+│   │   ├── test/video/
+│   │   ├── train/video/           # fine-tune 풀
+│   │   ├── golden/v1/
+│   │   ├── pull/evidence|models|golden/
+│   │   ├── raw/faceforensics|voxceleb|celeb-df-v2/
+│   │   └── cache/
+│   ├── results/infer|eval|reports/
+│   ├── checkpoints/
+│   └── scripts/download|infer|eval|promote|upload/
 │
-├── data/                          # 입력 데이터 (모델 아님)
-│   ├── test/                      # 실험용 테스트 데이터셋 (가변·임시)
-│   │   └── video/                 # mp4 등 영상 샘플
-│   ├── golden/                    # 회귀 테스트 고정셋 (로컬 master)
-│   ├── pull/                      # S3에서 내려받은 데이터
-│   │   ├── evidence/              # evidence 버킷 copy
-│   │   ├── models/                # models 버킷 deploy pull (parity)
-│   │   └── golden/                # (선택) S3 golden 백업 sync
-│   ├── raw/                       # 로컬 임시·수동 입력
-│   └── cache/                     # HF 캐시 등
+├── forgery/                       # ===== 2차 위변조 =====
+│   ├── config/
+│   │   ├── thresholds.yaml        # blur/block/fft H/L (보정 후 고정)
+│   │   └── weights_2nd.yaml       # region fusion 가중치
+│   ├── models/
+│   │   ├── test/
+│   │   │   ├── spatial/trufor|catnet|sparsevit/v1.0.0/
+│   │   │   ├── temporal/gmflow/   # discontinuity (flow 가중치)
+│   │   │   └── compression/dc/v1.0.0/
+│   │   ├── dev/
+│   │   └── deploy/
+│   │       ├── spatial/trufor/v1.0.0/
+│   │       └── profile/thresholds/v1.0.0/
+│   ├── data/
+│   │   ├── test/video|image/casia|imd2020/
+│   │   ├── cal/threshold/         # 임계값 보정용 (GT + 랜덤 가공)
+│   │   ├── cal/fusion/            # weights_2nd 튜닝용
+│   │   ├── synth/regions/R0..R7/  # region 합성 eval
+│   │   ├── golden/v1/
+│   │   ├── pull/
+│   │   ├── raw/
+│   │   └── cache/
+│   ├── results/infer|eval|reports/
+│   ├── checkpoints/
+│   └── scripts/
+│       ├── profile/               # compression_profile, calibrate_thresholds
+│       ├── data/                  # synthesize_region_variants
+│       ├── download|infer|eval|promote|upload/
 │
-├── results/                       # 출력물
-│   ├── infer/                     # 추론 결과 (파일별 점수·판정)
-│   ├── eval/                      # 평가 결과 (정확도·F1·latency)
-│   └── reports/                   # 사람이 읽는 요약 (md/csv)
-│
-├── checkpoints/                   # dev 튜닝 중간 .pth
-│
-├── scripts/
-│   ├── download/                  # 다운로드 전용
-│   │   ├── models/                # HF/GitHub → models/test
-│   │   ├── data/                  # golden 구성, S3 pull
-│   │   └── deps/                  # torch 등 환경
-│   ├── infer/                     # 추론 실행 → results/infer
-│   ├── eval/                      # golden 대비 채점 → results/eval
-│   ├── promote/                   # test→dev→deploy 승격
-│   └── upload/                    # deploy·golden → S3
-│
-└── logs/                          # 스크립트 실행 로그
+└── logs/
+    ├── deepfake/
+    └── forgery/
 ```
 
 ---
 
-## 폴더별 설명
+## deepfake vs forgery
 
-### 최상위
+| | `deepfake/` | `forgery/` |
+|---|-------------|------------|
+| **질문** | AI로 사람·신체가 합성됐나? | 편집·컷·재압축 흔적이 있나? |
+| **모델** | Xception, VideoMAE, TimeSformer, GMFlow(motion) | TruFor, GMFlow(discontinuity), DC |
+| **데이터** | FF++, Vox, Celeb-DF, DFDC | CASIA, IMD, CSVTED, cal/synth |
+| **config** | `config/models.deepfake.yaml` | `forgery/config/thresholds.yaml`, `weights_2nd.yaml` |
+| **문서** | [VIDEO_DEEPFAKE_MODEL_BENCHMARK_3x3.md](./VIDEO_DEEPFAKE_MODEL_BENCHMARK_3x3.md) | [TAMPERING_DETECTION_PIPELINE.md](./TAMPERING_DETECTION_PIPELINE.md) · [REGION_THRESHOLD_CALIBRATION.md](./REGION_THRESHOLD_CALIBRATION.md) |
 
-| 경로 | 기능 |
-|------|------|
-| `.venv/` | `torch`, `transformers` 등 AI 패키지가 설치되는 Python 가상환경 |
-| `README.md` | GPU 서버에서의 빠른 시작·경로 요약 |
-| `logs/` | 스크립트 stderr/stdout 보관, 장애 시 추적 |
+### GMFlow 가중치 공유
 
-### `config/`
+1차·2차 모두 flow backbone은 동일할 수 있습니다.
 
-| 파일 | 기능 |
-|------|------|
-| `env.local` | `AWS_PROFILE`, `AWS_REGION`, `S3_MODELS_BUCKET` 등 비밀·환경값 |
-| `env.local.example` | `env.local` 작성 템플릿 |
-| `models.yaml` | 모델 ID, test/dev/deploy 로컬 경로, S3 deploy prefix, 외부 다운로드 URL |
-| `buckets.yaml` | evidence·models 버킷 이름, pull/upload 시 사용할 S3 prefix |
+```bash
+# 선택: forgery에서 deepfake optical 가중치 symlink
+ln -s ../../../deepfake/models/test/optical/gmflow \
+  ~/forenShield-ai/forgery/models/test/temporal/gmflow
+```
 
-### `models/` — 3단계
+2차는 **점수 스크립트만 분리** (`motion_anomaly` vs `discontinuity`).
 
-| 단계 | 경로 | 용도 | S3 |
-|------|------|------|-----|
-| 테스트 | `models/test/` | 첫 다운로드, 빠른 실험, 깨진 가중치 허용 | ❌ |
-| 개발 | `models/dev/` | 튜닝·`ai-forensic` 연동 전 통합, golden 1차 통과 | ❌ |
-| 배포 | `models/deploy/` | 운영 확정본, `manifest.json` + SHA-256 고정 | ✅ sync 대상 |
+---
 
-각 모델 버전 폴더 예:
+## 폴더별 설명 (공통 패턴)
+
+각 트랙(`deepfake/`, `forgery/`) 안은 **동일한 3단계**를 따릅니다.
+
+### `models/` — test / dev / deploy
+
+| 단계 | 용도 | S3 |
+|------|------|-----|
+| `test/` | 첫 다운로드·실험 | ❌ |
+| `dev/` | 튜닝·통합 검증 | ❌ |
+| `deploy/` | 운영 확정·S3 sync | ✅ |
+
+**deepfake 예:**
 
 ```text
-models/deploy/video/xception/v1.0.0/
+deepfake/models/deploy/video/xception/v1.0.0/
 ├── xception_best.pth
 └── manifest.json
 ```
 
-`manifest.json`: `modelId`, `version`, 파일 SHA-256, 입력 규격(예: 299×299 face crop).
+**forgery 예:**
+
+```text
+forgery/models/deploy/spatial/trufor/v1.0.0/
+├── trufor_weights.pth
+└── manifest.json
+
+forgery/models/deploy/profile/thresholds/v1.0.0/
+├── thresholds.yaml
+└── weights_2nd.yaml
+```
 
 ### `data/`
 
-| 경로 | 기능 |
-|------|------|
-| `test/video/` | **실험용 영상 샘플**. 유튜브·공개 데이터셋 등 빠른 infer 테스트 입력 (가변, S3 무관) |
-| `golden/v1/video/` | **고정 회귀셋**. `manifest.json`에 파일·정답 라벨(real/fake). 모델 변경 시 동일 입력으로 비교 |
-| `pull/evidence/` | `forenshield-evidence` 버킷에서 copy 객체를 pull — 운영 증거로 로컬 infer 테스트 |
-| `pull/models/` | `forenshield-models` 버킷 deploy 경로 pull — 운영과 동일 가중치로 parity 검증 |
-| `pull/golden/` | S3에 백업한 golden을 다른 머신과 sync (선택) |
-| `raw/` | 다운로드 직후·전처리 전 임시 보관 (unzip, 변환 중간물) |
-| `cache/` | HuggingFace·임시 unzip 캐시 |
-
-#### `test/` vs `golden/` vs `pull/`
-
-| 구분 | 경로 | 용도 |
-|------|------|------|
-| **test** | `data/test/` | 자유롭게 넣는 실험용 샘플. 정답 라벨 없어도 됨 |
-| **golden** | `data/golden/` | 버전 고정 회귀셋. eval 시 정답과 비교 |
-| **pull** | `data/pull/` | S3·운영 환경에서 내려받은 데이터 |
+| 경로 | deepfake | forgery |
+|------|----------|---------|
+| `test/` | Celeb-DF 50+50 등 벤치 | CASIA·IMD 샘플 |
+| `train/` | FF++ fake + Vox real | (fine-tune 시) tamper+mask |
+| `golden/` | 1차 회귀셋 | 2차 spatial+cut GT |
+| `cal/threshold/` | — | GT + 랜덤 blur/JPEG → `thresholds.yaml` |
+| `cal/fusion/` | — | region별 fusion 튜닝 |
+| `synth/regions/` | — | R0~R7 합성 variant |
+| `pull/evidence/` | S3 증거 copy | 동일 |
 
 ### `results/`
 
 | 경로 | 기능 |
 |------|------|
-| `infer/` | **추론(inference)** 1회 = 폴더 1개. 파일별 fake 점수, 구간 점수, 처리 시간 |
-| `eval/` | **평가(evaluation)**. infer 결과를 golden 정답과 비교 — accuracy, F1, latency |
-| `reports/` | 팀 공유용 요약 문서 |
-
-#### infer vs eval
-
-| 용어 | 의미 | 출력 예 |
-|------|------|---------|
-| **infer** | 모델에 입력을 넣고 **점수·판정을 산출** | `video_a.mp4 → fake 0.87` |
-| **eval** | infer 결과를 **정답과 비교해 모델 품질 지표** 산출 | `golden 10건 중 9건 일치, F1=0.92` |
-
-### `checkpoints/`
-
-dev 단계 **파인튜닝** 중 epoch별 중간 `.pth`. 최종본만 골라 `models/dev/` 또는 `deploy/`로 복사.
+| `infer/` | 추론 1회 = RUN_ID 폴더 (json, heatmap) |
+| `eval/` | golden·cal 대비 metrics |
+| `reports/` | 팀 공유 md/csv |
 
 ### `scripts/`
 
 | 하위 | 기능 |
 |------|------|
-| `download/models/` | 외부 URL/HF → `models/test/` |
-| `download/data/` | golden 구성, `s3_pull_evidence`, `s3_pull_deploy_model` 등 |
-| `download/deps/` | torch·CUDA 패키지 설치 |
-| `infer/` | 단일·배치 추론 → `results/infer/` |
-| `eval/` | golden 대비 metrics → `results/eval/` |
-| `promote/` | `test_to_dev`, `dev_to_deploy` 복사·manifest 갱신 |
-| `upload/` | `models/deploy/` → S3 models 버킷 |
+| `download/` | HF/GitHub → `models/test/` |
+| `infer/` | 배치 추론 → `results/infer/` |
+| `eval/` | 채점 → `results/eval/` |
+| `promote/` | test→dev→deploy |
+| `upload/` | deploy → S3 |
+
+**forgery 전용**
+
+| 하위 | 기능 |
+|------|------|
+| `profile/` | `compression_profile.py`, `calibrate_thresholds.py` |
+| `data/` | `synthesize_region_variants.py` |
+
+`ai-forensic/scripts/` 의 스크립트는 GPU에 clone 후, 트랙 루트에 맞게 `FORENSHIELD_AI_ROOT`만 바꿔 실행합니다.
 
 ---
 
 ## S3 경로 매핑
 
-### Models 버킷 (`forenshield-models-877044078824`)
+### Models 버킷
 
 ```text
-로컬  models/deploy/video/xception/v1.0.0/
-  ↔  s3://forenshield-models-877044078824/video/xception/v1.0.0/
+# 1차 (기존)
+deepfake/models/deploy/video/xception/v1.0.0/
+  ↔  s3://forenshield-models-.../video/xception/v1.0.0/
 
-로컬  data/golden/v1/  (선택 백업)
-  ↔  s3://forenshield-models-877044078824/golden-set/v1/
+# 2차 (신규 prefix 예정)
+forgery/models/deploy/spatial/trufor/v1.0.0/
+  ↔  s3://forenshield-models-.../forgery/spatial/trufor/v1.0.0/
+
+forgery/models/deploy/profile/thresholds/v1.0.0/
+  ↔  s3://forenshield-models-.../forgery/profile/thresholds/v1.0.0/
 ```
 
-### Evidence 버킷 (`forenshield-evidence-877044078824`)
+### Evidence 버킷 (벤치 결과)
 
 ```text
-s3://forenshield-evidence-.../cases/{case_id}/{file_id}/copy/...
-  →  data/pull/evidence/cases/...
+# 1차 벤치
+s3://forenshield-evidence-.../cases/test/video-benchmark-datasets/...
+
+# 2차 벤치 (예정)
+s3://forenshield-evidence-.../cases/test/forgery-benchmark-datasets/...
 ```
 
 ---
 
 ## 워크플로
 
+### 1차 deepfake
+
 ```text
-1. download/models     → models/test/
-2. infer (data/test)   → results/infer/   # 빠른 스모크 테스트
-2b. infer (golden)     → results/infer/   # 회귀·품질 검증
-3. eval                → results/eval/
-4. promote test→dev    → models/dev/   (튜닝 시 checkpoints/)
-5. infer + eval (재검)
-6. promote dev→deploy  → models/deploy/
-7. upload              → S3 models 버킷
-8. ai-forensic / Worker → S3 deploy pull → /ai/analyze
+FORENSHIELD_AI_ROOT=~/forenShield-ai/deepfake
+
+1. download/models     → deepfake/models/test/
+2. infer (data/test)   → deepfake/results/infer/
+3. eval                → deepfake/results/eval/
+4. promote → deploy
+5. upload              → S3 video/*
 ```
 
-운영 증거로 테스트할 때:
+### 2차 forgery
 
 ```text
-download/data/s3_pull_evidence  → data/pull/evidence/
-infer (pull/evidence)           → results/infer/
+FORENSHIELD_AI_ROOT=~/forenShield-ai/forgery
+
+1. download/models     → forgery/models/test/spatial/trufor/
+2. data cal set + 랜덤 가공 → forgery/data/cal/threshold/
+3. profile + calibrate → forgery/config/thresholds.yaml
+4. infer TruFor+GMFlow+DC → forgery/results/infer/
+5. eval_by_region      → forgery/results/eval/
+6. tune weights_2nd.yaml
+7. promote → deploy (trufor + profile bundle)
+8. upload              → S3 forgery/*
 ```
 
 ---
 
-## 초기 구조 생성
+## 초기 구조 생성 (원클릭)
 
-GPU SSH에서 `ai-forensic` 저장소를 clone한 뒤:
-
-```bash
-cd ~/forenShield-ai   # 또는 원하는 루트
-bash /path/to/ai-forensic/scripts/init_forenShield_ai_layout.sh
-```
-
-기본 루트는 `$HOME/forenShield-ai`입니다. 변경:
+GPU SSH 접속 후 **한 줄**:
 
 ```bash
-FORENSHIELD_AI_ROOT=/data/forenShield-ai bash scripts/init_forenShield_ai_layout.sh
+bash ~/ai-forensic/scripts/setup_gpu_workstation.sh
 ```
+
+`ai-forensic`이 없으면 먼저:
+
+```bash
+cd ~ && git clone https://github.com/sk-final-deepfake/ai-forensic.git
+bash ~/ai-forensic/scripts/setup_gpu_workstation.sh
+```
+
+스크립트가 자동으로:
+
+1. `deepfake/` · `forgery/` 폴더 skeleton 생성  
+2. 루트에 옛 `models/`, `data/` 등이 있으면 → `deepfake/`로 이전  
+3. `config/env.local` 템플릿 생성  
+4. `.venv` 없으면 생성  
+
+옵션:
+
+```bash
+SKIP_MIGRATE=1 bash ~/ai-forensic/scripts/setup_gpu_workstation.sh   # 이전 없이 빈 forgery만
+DRY_RUN=1 bash ~/ai-forensic/scripts/setup_gpu_workstation.sh          # migrate 미리보기
+FORENSHIELD_AI_ROOT=/data/forenShield-ai bash ~/ai-forensic/scripts/setup_gpu_workstation.sh
+```
+
+### 수동 (세부 단계)
+
+<details>
+<summary>init / migrate 를 따로 실행할 때</summary>
+
+```bash
+bash ~/ai-forensic/scripts/init_forenShield_ai_layout.sh
+DRY_RUN=1 bash ~/ai-forensic/scripts/migrate_flat_to_track_layout.sh
+bash ~/ai-forensic/scripts/migrate_flat_to_track_layout.sh
+```
+
+</details>
+
+---
+
+## 기존 스크립트 호환
+
+`ai-forensic/scripts/infer/*.sh` 는 기본값이 `FORENSHIELD_AI_ROOT=$HOME/forenShield-ai` 입니다.  
+**트랙 분리 후** 실행 예:
+
+```bash
+export FORENSHIELD_AI_ROOT=~/forenShield-ai/deepfake
+bash ai-forensic/scripts/infer/run_videomae_celebdf_benchmark.sh
+```
+
+향후 스크립트는 `FORENSHIELD_TRACK` 기본값 `deepfake` 로 통일 예정.
 
 ---
 
 ## 관련 문서
 
-- [KIMMINHEE_AI_SERVER_WORK_SUMMARY.md](./KIMMINHEE_AI_SERVER_WORK_SUMMARY.md) — AI 서버 API·Mock 연동
+- [TAMPERING_DETECTION_PIPELINE.md](./TAMPERING_DETECTION_PIPELINE.md) — 2차 파이프라인 설계
+- [REGION_THRESHOLD_CALIBRATION.md](./REGION_THRESHOLD_CALIBRATION.md) — 임계값·region 합성
+- [VIDEO_DEEPFAKE_MODEL_BENCHMARK_3x3.md](./VIDEO_DEEPFAKE_MODEL_BENCHMARK_3x3.md) — 1차 벤치
+- [KIMMINHEE_AI_SERVER_WORK_SUMMARY.md](./KIMMINHEE_AI_SERVER_WORK_SUMMARY.md) — AI 서버 API
 - [../README.md](../README.md) — `ai-forensic` FastAPI 실행

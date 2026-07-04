@@ -19,7 +19,7 @@ $files = @(
     "prepare_trufor_video_frames.py",
     "train_trufor_video_forgery.py",
     "trufor_video_common.py",
-    "merge_trufor_infer_checkpoint.py",
+    "patch_builder_np_conf_load.py",
     "run_trufor_forgery_train.sh",
     "run_trufor_forgery_train_v2.sh",
     "run_trufor_forgery_train_v4.sh",
@@ -29,6 +29,7 @@ $files = @(
     "run_trufor_forgery_train_r4.sh",
     "run_trufor_forgery_train_r5.sh",
     "run_trufor_forgery_train_r5_calibrated.sh",
+    "run_trufor_forgery_train_s1_calibrated.sh",
     "spatial_benchmark_calibrate_from_predictions.py",
     "discover_mvtb_video_pools.py",
     "evaluate_mvtb_holdout_predictions.py",
@@ -54,7 +55,8 @@ $patches = @(
     "trufor_forgery_video_r2.yaml",
     "trufor_forgery_video_r0.yaml",
     "trufor_forgery_video_r4.yaml",
-    "trufor_forgery_video_r5.yaml"
+    "trufor_forgery_video_r5.yaml",
+    "trufor_forgery_video_s1.yaml"
 )
 
 function Resolve-LocalPaths([string[]]$Names, [string]$SubDir) {
@@ -110,4 +112,4 @@ Write-Host ""
 Write-Host "Done. On GPU:"
 Write-Host "  cd ~/forenShield-ai/forgery && source ../.venv/bin/activate"
 Write-Host "  sed -i 's/\r$//' scripts/train/record_r5_mvtb_dev_adoption.sh"
-Write-Host "  bash scripts/train/record_r5_mvtb_dev_adoption.sh"
+Write-Host "  bash scripts/train/run_trufor_forgery_train_s1_calibrated.sh   # S1 line (isolated from R-line)"

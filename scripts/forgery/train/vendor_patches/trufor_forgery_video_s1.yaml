@@ -1,0 +1,65 @@
+# ForenShield TruFor S1 line — separate from baseline R1~R5
+# Copy to: vendor/TruFor/TruFor_train_test/lib/config/trufor_forgery_video_s1.yaml
+# Use: -exp trufor_forgery_video_s1
+#
+# S1 strategy (vs R5):
+#   - Same spatial prepare (skip-OOW, oversample x3) via run script
+#   - BEST_KEY tampered_pixel_f1: balance recall/precision for infer proxy
+#   - Lower LR + longer train: reduce FP inflation vs R4-style epoch bump
+#   - CLASS_WEIGHTS 1.8: moderate fake emphasis (between v4 1.5 and v3 2.5)
+# Start: models/test baseline checkpoint (NOT R3/R5 weights)
+
+CUDNN:
+  BENCHMARK: false
+  DETERMINISTIC: false
+  ENABLED: false
+WORKERS: 4
+
+DATASET:
+  TRAIN: [FSVIDEO]
+  VALID: [FSVIDEO]
+  NUM_CLASSES: 2
+  CLASS_WEIGHTS: [1.0, 1.8]
+
+MODEL:
+  NAME: detconfcmx
+  PRETRAINED: 'pretrained_models/segformers/mit_b2.pth'
+  MODS: ('RGB','NP++')
+  EXTRA:
+    BACKBONE: mit_b2
+    DECODER: MLPDecoder
+    DECODER_EMBED_DIM: 512
+    PREPRC: 'imagenet'
+    BN_EPS: 0.001
+    BN_MOMENTUM: 0.1
+    NP_WEIGHTS: 'pretrained_models/noiseprint++/noiseprint++.th'
+    MODULES: ['NP++','backbone','loc_head']
+    FIX_MODULES: ['NP++']
+
+LOSS:
+  LOSSES:
+    - [ 'LOC', 1.0, 'dice_entropy' ]
+  SMOOTH: 0
+
+TRAIN:
+  PRETRAINING: ''
+  RESUME: false
+  IMAGE_SIZE: [512, 512]
+  BATCH_SIZE_PER_GPU: 2
+  SHUFFLE: true
+  BEGIN_EPOCH: 0
+  END_EPOCH: 10
+  OPTIMIZER: sgd
+  LR: 0.0005
+  WD: 0.0005
+  MOMENTUM: 0.9
+  NESTEROV: false
+  IGNORE_LABEL: -1
+  AUG: null
+  NUM_SAMPLES: 0
+
+VALID:
+  FIRST_VALID: false
+  MAX_SIZE: 1024
+  BEST_KEY: 'tampered_pixel_f1'
+  AUG: null

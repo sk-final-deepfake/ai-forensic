@@ -26,6 +26,12 @@ from backends.base import OpticalFlowBackend
 SCHEMA_VERSION = "1.1"
 DEFAULT_ANOMALY_THRESHOLD = 0.5
 DEFAULT_SEGMENT_COUNT = 4
+from gmflow_scoring import (
+    DEFAULT_SIGNAL_WEIGHTS,
+    cohort_baselines_from_reports as cohort_baselines_for_reports,
+    motion_anomaly_score as _motion_anomaly_score_impl,
+    profile_from_filename,
+)
 PROGRESS_BAR_WIDTH = 28
 BENCHMARK_METHOD = "optical_flow_motion_heuristic_over_frame_pairs"
 
@@ -731,28 +737,27 @@ def normalize_reports_schema(reports: list[dict[str, Any]]) -> list[dict[str, An
     return [normalize_report_schema(report) for report in reports]
 
 
-def _motion_anomaly_score(aggregate: dict[str, float], cohort: dict[str, float]) -> float:
-    if not cohort:
-        return 0.0
-    z_parts: list[float] = []
-    mapping = [
-        ("temporal_jitter", "temporal_jitter_median", "temporal_jitter_std"),
-        ("spatial_inconsistency_mean", "spatial_inconsistency_median", "spatial_inconsistency_std"),
-        ("angle_dispersion_mean", "angle_dispersion_median", "angle_dispersion_std"),
-        ("flow_mag_mean", "flow_mag_mean_median", "flow_mag_mean_std"),
-    ]
-    for value_key, med_key, std_key in mapping:
-        z = (aggregate[value_key] - cohort[med_key]) / cohort[std_key]
-        z_parts.append(max(0.0, z))
-    if not z_parts:
-        return 0.0
-    raw = float(np.mean(z_parts))
-    return float(min(1.0, raw / 3.0))
+def _motion_anomaly_score(
+    aggregate: dict[str, float],
+    cohort: dict[str, float],
+    *,
+    signal_weights: dict[str, float] | None = None,
+) -> float:
+    return _motion_anomaly_score_impl(aggregate, cohort, signal_weights=signal_weights)
+
+
+def _report_matches_profile(report: dict[str, Any], profile: str) -> bool:
+    fn = str(report.get("file") or "")
+    tagged = profile_from_filename(fn)
+    return tagged == profile if tagged else False
 
 
 def enrich_reports_with_scores(
     reports: list[dict[str, Any]],
     threshold: float = DEFAULT_ANOMALY_THRESHOLD,
+    *,
+    per_profile_cohort: bool = False,
+    signal_weights: dict[str, float] | None = None,
 ) -> dict[str, float]:
     normalize_reports_schema(reports)
 
@@ -762,7 +767,21 @@ def enrich_reports_with_scores(
         if "ground_truth_label" not in report and "label" in report:
             report["ground_truth_label"] = report.get("label")
 
-    cohort = _cohort_baselines(reports)
+    combined_cohort = _cohort_baselines(reports)
+    profile_cohorts: dict[str, dict[str, float]] = {}
+    if per_profile_cohort:
+        for prof in ("ffpp_vox", "celebdf"):
+            profile_cohorts[prof] = cohort_baselines_for_reports(reports, profile=prof)
+
+    def _cohort_for_report(report: dict[str, Any]) -> dict[str, float]:
+        if not per_profile_cohort:
+            return combined_cohort
+        prof = profile_from_filename(str(report.get("file") or ""))
+        if prof and profile_cohorts.get(prof):
+            return profile_cohorts[prof]
+        return combined_cohort
+
+    cohort = combined_cohort
 
     # score_breakdown(?곸꽭 遺꾩꽍 寃곌낵)???녿뒗 "理쒖냼?? predictions.json留??덈뒗 寃쎌슦瑜??꾪빐
     # flow_mean 湲곕컲 fallback cohort瑜?蹂꾨룄濡?以鍮꾪빀?덈떎.
@@ -795,7 +814,8 @@ def enrich_reports_with_scores(
         # ?곸꽭(score_breakdown) ?덉쑝硫?湲곗〈 濡쒖쭅 洹몃?濡??ъ슜
         if "score_breakdown" in report:
             aggregate = report["score_breakdown"]["aggregate"]
-            score = _motion_anomaly_score(aggregate, cohort)
+            cohort = _cohort_for_report(report)
+            score = _motion_anomaly_score(aggregate, cohort, signal_weights=signal_weights)
             report["motion_anomaly_score"] = round(score, 6)
             report["pred_label"] = "fake" if score >= threshold else "real"
             report["score_breakdown"]["threshold"] = threshold

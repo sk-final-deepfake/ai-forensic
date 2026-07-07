@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import cv2
 import torch
 
 from app.core.model_settings import ModelSettings, load_json_config
@@ -32,9 +31,8 @@ class InferRuntime:
         ensure_infer_scripts_on_path()
         self.device = torch.device(settings.infer_device)
         self._xception_model = None
-        self._xception_cropper = None
+        self._face_cropper = None
         self._timesformer_model = None
-        self._timesformer_cascade = None
         self._gmflow_backend = None
         self._gmflow_scorer: tuple[Any, dict] | None = None
 
@@ -59,27 +57,31 @@ class InferRuntime:
             "infer_optical_video": infer_optical_video,
         }
 
+    def _ensure_face_cropper(self, modules: dict[str, Any]) -> None:
+        if self._face_cropper is not None:
+            return
+        self._face_cropper = modules["create_face_cropper"](
+            method="yunet",
+            padding=0.3,
+            square=True,
+            human_only=True,
+        )
+
     def _ensure_xception(self, modules: dict[str, Any]) -> None:
         if self._xception_model is not None:
             return
         if not self.settings.xception_weights.is_file():
             raise FileNotFoundError(f"Xception weights not found: {self.settings.xception_weights}")
+        self._ensure_face_cropper(modules)
         self._xception_model = modules["load_xception"](self.settings.xception_weights, self.device)
-        self._xception_cropper = modules["create_face_cropper"](
-            method="mediapipe",
-            padding=0.3,
-            square=True,
-        )
 
     def _ensure_timesformer(self, modules: dict[str, Any]) -> None:
         if self._timesformer_model is not None:
             return
         if not self.settings.timesformer_weights.is_file():
             raise FileNotFoundError(f"TimeSformer weights not found: {self.settings.timesformer_weights}")
+        self._ensure_face_cropper(modules)
         self._timesformer_model = modules["load_timesformer"](self.settings.timesformer_weights, self.device)
-        self._timesformer_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        )
 
     def _ensure_gmflow(self, modules: dict[str, Any]) -> None:
         if self._gmflow_backend is not None:
@@ -106,7 +108,7 @@ class InferRuntime:
         result = modules["infer_xception"](
             self._xception_model,
             video_path,
-            self._xception_cropper,
+            self._face_cropper,
             self.device,
             threshold=self.fusion_config.module_thresholds["cnn"],
             num_frames=32,
@@ -140,11 +142,14 @@ class InferRuntime:
         result = modules["infer_video_clip_model"](
             self._timesformer_model,
             video_path,
-            self._timesformer_cascade,
+            None,
             self.device,
             clip_to_tensor=modules["clip_to_tensor"],
             method="timesformer_clip_classification_outputs",
             threshold=self.fusion_config.module_thresholds["temporal"],
+            clip_frames=8,
+            clip_size=224,
+            face_cropper=self._face_cropper,
         )
         breakdown = result.get("score_breakdown") or {}
         per_clip = breakdown.get("per_clip") or []
@@ -230,10 +235,34 @@ class InferRuntime:
             },
         )
 
+    def _skipped_module(self, module: str, *, reason: str) -> ModuleInferResult:
+        version_key = {"cnn": "cnn", "temporal": "temporal", "optical": "optical"}[module]
+        model_name = {"cnn": "xception", "temporal": "timesformer", "optical": "gmflow"}[module]
+        return ModuleInferResult(
+            module=module,
+            model_name=model_name,
+            model_version=self.fusion_config.model_versions.get(version_key, model_name),
+            status=reason,
+            fake_score=None,
+            pred_label=None,
+            details={},
+        )
+
     def analyze_modules(self, video_path: Path) -> list[ModuleInferResult]:
         modules = self._import_infer_modules()
-        return [
-            self.run_cnn(video_path, modules),
-            self.run_temporal(video_path, modules),
-            self.run_optical(video_path, modules),
-        ]
+        cnn = self.run_cnn(video_path, modules)
+        if cnn.status in {"no_face", "no_human_face"} or cnn.fake_score is None:
+            return [
+                cnn,
+                self._skipped_module("temporal", reason="no_human_face"),
+                self._skipped_module("optical", reason="skipped_no_human_face"),
+            ]
+        temporal = self.run_temporal(video_path, modules)
+        if temporal.status in {"no_face", "no_human_face"} or temporal.fake_score is None:
+            return [
+                cnn,
+                temporal,
+                self._skipped_module("optical", reason="skipped_no_human_face"),
+            ]
+        optical = self.run_optical(video_path, modules)
+        return [cnn, temporal, optical]

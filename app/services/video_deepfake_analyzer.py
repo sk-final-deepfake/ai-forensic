@@ -39,6 +39,7 @@ from app.services.late_fusion import (
 
 
 FUSION_MODEL_NAME = "forenshield-late-fusion"
+NO_HUMAN_FACE_STATUSES = frozenset({"no_face", "no_human_face", "skipped_no_human_face"})
 
 
 def _utc_now_iso() -> str:
@@ -199,6 +200,27 @@ def build_response_from_modules(
     s_cnn = cnn.fake_score if cnn else None
     s_temporal = temporal.fake_score if temporal else None
     s_optical = optical.fake_score if optical and optical.fake_score is not None else 0.0
+
+    blocked_modules = [
+        m.module
+        for m in (cnn, temporal)
+        if m is not None and (m.status in NO_HUMAN_FACE_STATUSES or m.fake_score is None)
+    ]
+    if blocked_modules:
+        frames_sampled = None
+        if cnn and cnn.details:
+            frames_sampled = (cnn.details.get("score_breakdown") or {}).get("frames_sampled")
+        detail = (
+            f" sampled_frames={frames_sampled}" if frames_sampled is not None else ""
+        )
+        return _failed_response(
+            request,
+            error_code="NO_HUMAN_FACE",
+            message=(
+                "사람 얼굴이 검출되지 않아 딥페이크 판별을 수행할 수 없습니다."
+                f" (modules={','.join(blocked_modules)}{detail})"
+            ),
+        )
 
     missing = [
         name

@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "fusion_version": "fusion-v4-ts-gated",
+  "method": "gated",
+  "description": "v4: tiered TS rescue (80/90% TS weight), optional base TS blend in ambiguous CNN zone, dual-high+low-GMF cap for field FP",
+  "weights": {
+    "cnn": 0.90,
+    "temporal": 0.00,
+    "optical": 0.10
+  },
+  "threshold": 0.6051,
+  "module_thresholds": {
+    "cnn": 0.78,
+    "temporal": 0.5,
+    "optical": 0.417
+  },
+  "risk_levels": {
+    "medium_min": 40.0,
+    "high_min": 70.0
+  },
+  "suspicious_segment": {
+    "high_risk_frame_threshold": 0.65,
+    "min_segment_sec": 0.5
+  },
+  "gating": {
+    "cnn_ambiguous_lo": 0.40,
+    "cnn_ambiguous_hi": 0.78,
+    "ts_rescue_min": 0.60,
+    "ts_rescue_margin": 0.15,
+    "ts_rescue_cnn_weight": 0.20,
+    "ts_rescue_temporal_weight": 0.80,
+    "ts_rescue_strong_min": 0.75,
+    "ts_rescue_strong_cnn_weight": 0.10,
+    "ts_rescue_strong_temporal_weight": 0.90,
+    "ts_base_weight": 0.06,
+    "ts_base_min": 0.45,
+    "ts_base_requires_ambiguous_cnn": true,
+    "gmflow_veto_max": 0.30,
+    "cnn_discount_when_gmf_low": 0.18,
+    "gmflow_soft_veto_cnn_min": 0.62,
+    "gmflow_soft_veto_max": 0.15,
+    "cnn_soft_discount": 0.10,
+    "ambiguous_boost": 0.04,
+    "ambiguous_boost_cnn_max": 0.68,
+    "ambiguous_cnn_floor_min": 0.58,
+    "ambiguous_gmf_max": 0.30,
+    "ambiguous_cnn_floor": false,
+    "dual_high_cnn_min": 0.85,
+    "dual_high_ts_min": 0.85,
+    "dual_high_gmf_max": 0.48,
+    "dual_high_fusion_cap": 0.60
+  },
+  "model_versions": {
+    "cnn": "xception/v1.1.0-celeb1k",
+    "temporal": "timesformer/v1.1.0-celeb1k",
+    "optical": "gmflow/v1.0.0-rf_pooled",
+    "fusion": "late-fusion-v4-ts-gated"
+  }
+}

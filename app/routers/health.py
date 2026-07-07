@@ -8,8 +8,9 @@ router = APIRouter()
 
 @router.get("/health")
 def health_check() -> dict[str, str]:
+    consumer_on = settings.consumer_enabled and bool(settings.rabbit_host)
     return {
         "status": "ok",
         "service": settings.ai_server_name,
-        "consumer": settings.consumer_enabled and bool(settings.rabbit_host),
+        "consumer": "enabled" if consumer_on else "disabled",
     }

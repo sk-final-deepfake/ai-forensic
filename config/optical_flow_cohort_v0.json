@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "source": "gmflow golden-200 real cohort (approximate defaults for single-video runtime)",
+  "flow_mag_mean_median": 3.82,
+  "flow_mag_mean_std": 1.45,
+  "temporal_jitter_median": 0.18,
+  "temporal_jitter_std": 0.09,
+  "spatial_inconsistency_median": 0.92,
+  "spatial_inconsistency_std": 0.31,
+  "angle_dispersion_median": 1.61,
+  "angle_dispersion_std": 0.44
+}

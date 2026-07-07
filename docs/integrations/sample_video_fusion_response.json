@@ -1,0 +1,121 @@
+{
+  "analysisRequestId": 1024,
+  "evidenceId": 512,
+  "status": "COMPLETED",
+  "riskScore": 67.05,
+  "confidenceScore": 0.72,
+  "riskLevel": "MEDIUM",
+  "analysisReasons": [
+    "CNN (Xception) fake_score=0.720 (real)",
+    "Temporal (TimeSformer) fake_score=0.680 (fake)",
+    "Optical (GMFlow) motion_score=0.310 (normal)",
+    "Late fusion (fusion-v0-smoke) score=0.671 → REAL @ T=0.57"
+  ],
+  "results": [
+    {
+      "type": "video",
+      "lipSyncDetected": false,
+      "lipSyncScore": 0.0,
+      "frameEditDetected": false,
+      "frameEditScore": 0.0,
+      "deepfakeDetected": false,
+      "deepfakeScore": 0.6705,
+      "splicingDetected": false,
+      "splicingScore": 0.0,
+      "reEncodingDetected": false,
+      "reEncodingScore": 0.0,
+      "frameRisks": [
+        {
+          "frameIndex": 10,
+          "timestampSec": 0.4,
+          "riskScore": 0.81
+        }
+      ],
+      "suspiciousSegments": [
+        {
+          "startTime": 0.4,
+          "endTime": 0.9,
+          "maxRiskScore": 0.81,
+          "reason": "High CNN frame-level fake probability cluster"
+        }
+      ],
+      "modelName": "forenshield-late-fusion",
+      "modelVersion": "fusion-v0-smoke",
+      "modelScores": [
+        {
+          "moduleName": "deepfake",
+          "detected": false,
+          "score": 0.6705,
+          "modelName": "forenshield-late-fusion",
+          "modelVersion": "fusion-v0-smoke"
+        },
+        {
+          "moduleName": "deepfake_cnn",
+          "detected": false,
+          "score": 0.72,
+          "modelName": "xception",
+          "modelVersion": "xception/v1.0.0"
+        },
+        {
+          "moduleName": "deepfake_temporal",
+          "detected": true,
+          "score": 0.68,
+          "modelName": "timesformer",
+          "modelVersion": "timesformer/v1.0.0"
+        },
+        {
+          "moduleName": "deepfake_optical",
+          "detected": false,
+          "score": 0.31,
+          "modelName": "gmflow",
+          "modelVersion": "gmflow/v1.0.0"
+        }
+      ],
+      "evidence": [
+        "CNN (Xception) fake_score=0.720 (real)",
+        "Temporal (TimeSformer) fake_score=0.680 (fake)",
+        "Optical (GMFlow) motion_score=0.310 (normal)",
+        "Late fusion (fusion-v0-smoke) score=0.671 → REAL @ T=0.57"
+      ]
+    }
+  ],
+  "analyzedAt": "2026-06-30T12:00:00+00:00",
+  "modelName": "forenshield-late-fusion",
+  "modelVersion": "fusion-v0-smoke",
+  "modelScores": [
+    {
+      "moduleName": "deepfake",
+      "detected": false,
+      "score": 0.6705,
+      "modelName": "forenshield-late-fusion",
+      "modelVersion": "fusion-v0-smoke"
+    },
+    {
+      "moduleName": "deepfake_cnn",
+      "detected": false,
+      "score": 0.72,
+      "modelName": "xception",
+      "modelVersion": "xception/v1.0.0"
+    },
+    {
+      "moduleName": "deepfake_temporal",
+      "detected": true,
+      "score": 0.68,
+      "modelName": "timesformer",
+      "modelVersion": "timesformer/v1.0.0"
+    },
+    {
+      "moduleName": "deepfake_optical",
+      "detected": false,
+      "score": 0.31,
+      "modelName": "gmflow",
+      "modelVersion": "gmflow/v1.0.0"
+    }
+  ],
+  "evidence": [
+    "CNN (Xception) fake_score=0.720 (real)",
+    "Temporal (TimeSformer) fake_score=0.680 (fake)",
+    "Optical (GMFlow) motion_score=0.310 (normal)",
+    "Late fusion (fusion-v0-smoke) score=0.671 → REAL @ T=0.57"
+  ]
+}

@@ -109,7 +109,8 @@ class AnalysisConsumer:
         self._connection = self._connect()
         channel = self._connection.channel()
         channel.basic_qos(prefetch_count=1)
-        channel.queue_declare(queue=s.analysis_queue, durable=True)
+        # Queue is created by backend (Spring) with DLX; passive attach only.
+        channel.queue_declare(queue=s.analysis_queue, passive=True)
         channel.basic_consume(
             queue=s.analysis_queue,
             on_message_callback=self._on_message,

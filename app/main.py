@@ -5,7 +5,7 @@ from fastapi import FastAPI
 
 from app.consumer import AnalysisConsumer
 from app.core.config import settings
-from app.routers import analyze, health
+from app.routers import analyze, health, infer
 
 logger = logging.getLogger("ai_fastapi")
 
@@ -41,3 +41,4 @@ app = FastAPI(title=settings.ai_server_name, lifespan=lifespan)
 
 app.include_router(health.router)
 app.include_router(analyze.router)
+app.include_router(infer.router)

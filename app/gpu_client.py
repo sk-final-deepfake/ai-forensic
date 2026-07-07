@@ -74,6 +74,9 @@ def call_gpu_gateway(job: AnalysisJobMessage, settings: Settings) -> AnalysisRes
         response.raise_for_status()
         data = response.json()
 
+    if data.get("status") in ("COMPLETED", "FAILED") and "analysisRequestId" in data:
+        return AnalysisResponseMessage.model_validate(data)
+
     if data.get("status") == "FAILED":
         return AnalysisResponseMessage(
             analysisRequestId=job.analysisRequestId,

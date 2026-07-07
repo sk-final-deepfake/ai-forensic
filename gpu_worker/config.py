@@ -55,18 +55,34 @@ class WorkerConfig:
     evidence_bucket: str = _env("S3_EVIDENCE_BUCKET", "")
 
     project_root: Path = Path(_env("FORENSHIELD_AI_ROOT", str(Path.home() / "forenShield-ai")))
+    deepfake_root: Path = Path(_env("DEEPFAKE_ROOT", "")) if _env("DEEPFAKE_ROOT", "") else project_root / "deepfake"
     work_dir: Path = project_root / "work"
     samples_dir: Path = project_root / "samples"
-    models_test_dir: Path = project_root / "models" / "test"
+    models_test_dir: Path = deepfake_root / "models" / "test"
     results_dir: Path = project_root / "results"
 
     inference_mode: str = _env("INFERENCE_MODE", "test")  # test | gateway | local_model
+    use_mock_infer: bool = _env("USE_MOCK_INFER", "0") in ("1", "true", "TRUE", "yes")
     gpu_gateway_url: str = _env("AI_GATEWAY_URL", "http://127.0.0.1:8000")
-    device: str = _env("INFERENCE_DEVICE", "cpu")
+    device: str = _env("INFER_DEVICE", "") or _env("INFERENCE_DEVICE", "cpu")
 
     model_id: str = _env("INFERENCE_MODEL_ID", "xception")
     model_version: str = _env("INFERENCE_MODEL_VERSION", "test")
     model_checkpoint: str = _env("MODEL_CHECKPOINT_PATH", "") or _env("XCEPTION_WEIGHTS", "")
+    timesformer_weights: str = _env("TIMESFORMER_WEIGHTS", "")
+    gmflow_pretrained: str = _env(
+        "GMFLOW_PRETRAINED",
+        "models/test/video/optical-flow/gmflow/pretrained/gmflow_things-e9887eda.pth",
+    )
+    gmflow_learned_head: str = _env(
+        "GMFLOW_LEARNED_HEAD",
+        "models/test/video/optical-flow/gmflow/v1.0.0/gmflow_learned_head.joblib",
+    )
+    gmflow_meta: str = _env(
+        "GMFLOW_META",
+        "models/test/video/optical-flow/gmflow/v1.0.0/gmflow_best.meta.json",
+    )
+    fusion_config_path: str = _env("FUSION_CONFIG_PATH", "config/fusion_v3_gated.json")
     sample_fps: float = float(_env("INFERENCE_SAMPLE_FPS", "1"))
     max_frames: int = int(_env("INFERENCE_MAX_FRAMES", "32"))
     deepfake_threshold: float = float(_env("DEEPFAKE_THRESHOLD", "0.5"))

@@ -30,6 +30,52 @@ class FrameRiskItem(BaseModel):
     riskScore: float
 
 
+class ClipRiskItem(BaseModel):
+    clipIndex: int
+    startFrameIndex: int
+    endFrameIndex: int
+    startTimeSec: float
+    endTimeSec: float
+    riskScore: float
+
+
+class PairRiskItem(BaseModel):
+    pairIndex: int
+    frameIndexA: int
+    frameIndexB: int
+    timestampSec: float
+    riskScore: float
+    motionMagnitude: float | None = None
+
+
+class SuspiciousSegmentItem(BaseModel):
+    startTime: float
+    endTime: float
+    maxRiskScore: float
+    reason: str | None = None
+
+
+class ModuleTimelineItem(BaseModel):
+    module: str
+    modelName: str
+    modelVersion: str
+    videoScore: float
+    threshold: float
+    detected: bool
+    frameRisks: list[FrameRiskItem] | None = None
+    clipRisks: list[ClipRiskItem] | None = None
+    pairRisks: list[PairRiskItem] | None = None
+    suspiciousSegments: list[SuspiciousSegmentItem] | None = None
+
+
+class ModelScoreItem(BaseModel):
+    moduleName: str
+    detected: bool
+    score: float
+    modelName: str
+    modelVersion: str
+
+
 class AnalysisVideoResultItem(BaseModel):
     type: Literal["video"] = "video"
     modelName: str | None = None
@@ -45,6 +91,13 @@ class AnalysisVideoResultItem(BaseModel):
     reEncodingDetected: bool | None = None
     reEncodingScore: float | None = None
     frameRisks: list[FrameRiskItem] | None = None
+    clipRisks: list[ClipRiskItem] | None = None
+    pairRisks: list[PairRiskItem] | None = None
+    suspiciousSegments: list[SuspiciousSegmentItem] | None = None
+    temporalSuspiciousSegments: list[SuspiciousSegmentItem] | None = None
+    opticalSuspiciousSegments: list[SuspiciousSegmentItem] | None = None
+    moduleTimelines: list[ModuleTimelineItem] | None = None
+    modelScores: list[ModelScoreItem] | None = None
 
 
 class AnalysisResponseMessage(BaseModel):
@@ -63,3 +116,4 @@ class AnalysisResponseMessage(BaseModel):
     analyzedAt: str
     errorCode: str | None = None
     message: str | None = None
+    modelScores: list[ModelScoreItem] | None = None

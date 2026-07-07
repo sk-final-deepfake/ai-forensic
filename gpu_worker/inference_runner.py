@@ -213,83 +213,19 @@ def run_gateway_inference(job: AnalysisJobMessage, local_path: Path, cfg: Worker
 
 
 def run_local_model_inference(job: AnalysisJobMessage, local_path: Path, cfg: WorkerConfig) -> AnalysisResponseMessage:
-    """models/test/video/xception — real GPU Xception deepfake inference."""
-    from gpu_worker.models.xception_video import run_xception_video, save_infer_json
+    """3모듈(Xception + TimeSformer + GMFlow) + Late Fusion — BE 계약 JSON 그대로."""
+    if cfg.use_mock_infer:
+        return run_test_inference(job, local_path, cfg)
 
-    checkpoint = _resolve_checkpoint_path(cfg)
-    device = cfg.device.lower()
-    if device.startswith("cuda") and device != "cpu":
-        device = "cuda"
+    from gpu_worker.pipeline.response_builder import build_analysis_response
 
-    model_name = cfg.model_id or "xception"
-    model_version = cfg.model_version or "v1.0.0-celeb1k"
-
-    xception = run_xception_video(
-        local_path,
-        checkpoint=checkpoint,
-        device=device,
-        sample_fps=cfg.sample_fps,
-        max_frames=cfg.max_frames,
-        model_id=model_name,
-        model_version=model_version,
+    payload = build_analysis_response(
+        analysis_request_id=job.analysisRequestId,
+        evidence_id=job.evidenceId,
+        video_path=local_path,
+        cfg=cfg,
     )
 
-    deepfake = xception.deepfake_score
-    threshold = cfg.deepfake_threshold
-    risk_score, risk_level = _risk_from_deepfake_only(deepfake)
-
-    frame_risks = [
-        FrameRiskItem(
-            frameIndex=i,
-            timestampSec=round(ts, 3),
-            riskScore=round(prob, 4),
-        )
-        for i, (ts, prob) in enumerate(zip(xception.frame_timestamps_sec, xception.frame_scores))
-    ]
-
-    video = _build_xception_video_item(
-        model_name=model_name,
-        model_version=model_version,
-        deepfake_score=deepfake,
-        threshold=threshold,
-        frame_risks=frame_risks,
-    )
-
-    reasons: list[str] = [
-        f"Xception ({model_name}/{model_version}) fake probability "
-        f"{deepfake:.2f} over {xception.frames_sampled} frames "
-        f"({xception.elapsed_sec:.1f}s on {xception.device})",
-    ]
-    if video.deepfakeDetected:
-        reasons.append(f"Deepfake threshold exceeded ({threshold:.2f})")
-
-    payload = AnalysisResponseMessage(
-        analysisRequestId=job.analysisRequestId,
-        evidenceId=job.evidenceId,
-        status="COMPLETED",
-        riskScore=risk_score,
-        confidenceScore=xception.confidence_score,
-        riskLevel=risk_level,
-        modelName=model_name,
-        modelVersion=model_version,
-        analysisReasons=reasons,
-        results=[video],
-        analyzedAt=_utc_now(),
-    )
-
-    infer_dir = cfg.results_dir / "infer"
-    infer_json = infer_dir / f"analysis_{job.analysisRequestId}_{job.evidenceId}.json"
-    save_infer_json(
-        xception,
-        infer_json,
-        extra={
-            "analysisRequestId": job.analysisRequestId,
-            "evidenceId": job.evidenceId,
-            "filePath": job.filePath,
-            "localPath": str(local_path),
-            "aiJson": payload.model_dump(mode="json", exclude_none=True),
-        },
-    )
     out_path = cfg.results_dir / f"analysis_{job.analysisRequestId}_{job.evidenceId}.json"
     out_path.write_text(
         json.dumps(payload.model_dump(mode="json", exclude_none=True), indent=2, ensure_ascii=False),

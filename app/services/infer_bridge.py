@@ -36,6 +36,7 @@ class InferRuntime:
         self._timesformer_model = None
         self._timesformer_cascade = None
         self._gmflow_backend = None
+        self._gmflow_scorer: tuple[Any, dict] | None = None
 
     def _import_infer_modules(self):
         from face_crop import create_face_cropper
@@ -88,6 +89,18 @@ class InferRuntime:
         backend.load()
         self._gmflow_backend = backend
 
+    def _ensure_gmflow_scorer(self) -> tuple[Any, dict] | None:
+        if self._gmflow_scorer is not None:
+            return self._gmflow_scorer
+        try:
+            from gmflow_learned_head_infer import load_scoring_config
+
+            self._gmflow_scorer = load_scoring_config(self.settings.ai_root)
+            return self._gmflow_scorer
+        except FileNotFoundError:
+            self._gmflow_scorer = None
+            return None
+
     def run_cnn(self, video_path: Path, modules: dict[str, Any]) -> ModuleInferResult:
         self._ensure_xception(modules)
         result = modules["infer_xception"](
@@ -102,6 +115,12 @@ class InferRuntime:
         )
         breakdown = result.get("score_breakdown") or {}
         per_frame = breakdown.get("per_frame_scores") or []
+        if not per_frame:
+            per_frame = [
+                {"frame_index": row["frame_index"], "fake_score": row.get("prob_fake")}
+                for row in breakdown.get("per_frame") or []
+                if row.get("frame_index") is not None and row.get("prob_fake") is not None
+            ]
         return ModuleInferResult(
             module="cnn",
             model_name="xception",
@@ -128,6 +147,20 @@ class InferRuntime:
             threshold=self.fusion_config.module_thresholds["temporal"],
         )
         breakdown = result.get("score_breakdown") or {}
+        per_clip = breakdown.get("per_clip") or []
+        per_clip_scores = breakdown.get("per_clip_scores") or []
+        if not per_clip_scores and per_clip:
+            per_clip_scores = [
+                {
+                    "clip_index": row.get("clip_index"),
+                    "fake_score": row.get("prob_fake"),
+                    "clip_start_frame": row.get("clip_start_frame"),
+                    "clip_end_frame": row.get("clip_end_frame"),
+                    "frame_indices": row.get("frame_indices") or [],
+                }
+                for row in per_clip
+                if row.get("prob_fake") is not None
+            ]
         return ModuleInferResult(
             module="temporal",
             model_name="timesformer",
@@ -137,7 +170,8 @@ class InferRuntime:
             pred_label=result.get("pred_label"),
             details={
                 "score_breakdown": breakdown,
-                "per_clip_scores": breakdown.get("per_clip_scores") or [],
+                "per_clip_scores": per_clip_scores,
+                "per_clip": per_clip,
                 "frames_used": result.get("frames_used"),
             },
         )
@@ -155,8 +189,28 @@ class InferRuntime:
             ground_truth_label=None,
             device=self.device,
         )
-        aggregate = raw.get("aggregate") or {}
-        fake_score = optical_score_from_aggregate(aggregate, self.optical_cohort)
+        raw["file"] = video_path.name
+
+        fake_score: float | None = None
+        per_frame_pair: list[dict[str, Any]] = []
+        scoring = self._ensure_gmflow_scorer()
+        if scoring is not None and raw.get("status") == "ok":
+            from copy import deepcopy
+
+            from gmflow_feature_extract import normalize_report
+            from gmflow_learned_head_infer import fake_score_from_report
+            from gmflow_scoring import enrich_motion_scores
+
+            row = deepcopy(raw)
+            normalize_report(row)
+            per_frame_pair = list((row.get("score_breakdown") or {}).get("per_frame_pair") or [])
+            enrich_motion_scores([row], threshold=0.5, per_profile_cohort=False)
+            scorer, meta = scoring
+            fake_score = fake_score_from_report(row, scorer, meta)
+        else:
+            aggregate = raw.get("aggregate") or {}
+            fake_score = optical_score_from_aggregate(aggregate, self.optical_cohort)
+
         threshold = self.fusion_config.module_thresholds["optical"]
         pred_label = None
         if fake_score is not None:
@@ -169,8 +223,9 @@ class InferRuntime:
             fake_score=fake_score,
             pred_label=pred_label,
             details={
-                "aggregate": aggregate,
+                "aggregate": raw.get("aggregate") or {},
                 "pair_stats": raw.get("pair_stats") or [],
+                "per_frame_pair": per_frame_pair,
                 "frame_pairs": raw.get("frame_pairs"),
             },
         )

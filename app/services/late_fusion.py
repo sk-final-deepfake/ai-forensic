@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import cv2
+import numpy as np
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,7 @@ def build_suspicious_segments(
     *,
     high_risk_threshold: float,
     min_segment_sec: float,
+    reason: str = "High CNN frame-level fake probability cluster",
 ) -> list[dict[str, float | str]]:
     if not frame_risks:
         return []
@@ -188,7 +190,7 @@ def build_suspicious_segments(
                 "startTime": round(start, 3),
                 "endTime": round(end, 3),
                 "maxRiskScore": round(max_score, 6),
-                "reason": "High CNN frame-level fake probability cluster",
+                "reason": reason,
             }
         )
 
@@ -200,6 +202,229 @@ def build_suspicious_segments(
             current = []
     flush()
     return segments
+
+
+def _clip_rows(per_clip_scores: list[dict[str, Any]], per_clip: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if per_clip:
+        return per_clip
+    rows: list[dict[str, Any]] = []
+    for row in per_clip_scores:
+        indices = row.get("frame_indices") or []
+        start = row.get("clip_start_frame")
+        end = row.get("clip_end_frame")
+        if start is None and indices:
+            start = indices[0]
+        if end is None and indices:
+            end = indices[-1]
+        score = row.get("fake_score", row.get("prob_fake"))
+        if start is None or end is None or score is None:
+            continue
+        rows.append(
+            {
+                "clip_index": row.get("clip_index", len(rows)),
+                "clip_start_frame": int(start),
+                "clip_end_frame": int(end),
+                "prob_fake": float(score),
+            }
+        )
+    return rows
+
+
+def build_clip_risks(
+    video_path: Path,
+    *,
+    per_clip_scores: list[dict[str, Any]] | None = None,
+    per_clip: list[dict[str, Any]] | None = None,
+) -> list[dict[str, float | int]]:
+    risks: list[dict[str, float | int]] = []
+    for row in _clip_rows(per_clip_scores or [], per_clip or []):
+        start = int(row["clip_start_frame"])
+        end = int(row["clip_end_frame"])
+        score = row.get("prob_fake", row.get("fake_score"))
+        if score is None:
+            continue
+        risks.append(
+            {
+                "clipIndex": int(row.get("clip_index", len(risks))),
+                "startFrameIndex": start,
+                "endFrameIndex": end,
+                "startTimeSec": frame_index_to_timestamp(video_path, start),
+                "endTimeSec": frame_index_to_timestamp(video_path, end),
+                "riskScore": round(float(score), 6),
+            }
+        )
+    return risks
+
+
+def build_clip_segment_risks(clip_risks: list[dict[str, float | int]]) -> list[dict[str, float | int]]:
+    """Convert clip windows to point samples for suspicious-segment clustering."""
+    points: list[dict[str, float | int]] = []
+    for row in clip_risks:
+        midpoint = (float(row["startTimeSec"]) + float(row["endTimeSec"])) / 2.0
+        points.append(
+            {
+                "timestampSec": round(midpoint, 3),
+                "riskScore": row["riskScore"],
+            }
+        )
+    return points
+
+
+def _pair_motion_score(flow_mag_mean: float, *, median: float, span: float) -> float:
+    if span <= 0:
+        return 0.0
+    relative = (flow_mag_mean - median) / span
+    return round(min(1.0, max(0.0, 0.5 + relative / 2.0)), 6)
+
+
+def build_pair_risks(
+    video_path: Path,
+    pair_stats: list[dict[str, Any]],
+    *,
+    per_frame_pair: list[dict[str, Any]] | None = None,
+) -> list[dict[str, float | int | None]]:
+    if per_frame_pair:
+        mags = [float(row.get("flow_mag_mean", 0.0)) for row in per_frame_pair]
+    else:
+        mags = [float(row.get("magnitude_mean", 0.0)) for row in pair_stats]
+    if not pair_stats and not per_frame_pair:
+        return []
+
+    median = float(np.median(mags)) if mags else 0.0
+    span = float(max(mags) - min(mags)) if mags else 0.0
+
+    risks: list[dict[str, float | int | None]] = []
+    if per_frame_pair and pair_stats:
+        iterable = zip(per_frame_pair, pair_stats)
+    elif per_frame_pair:
+        iterable = ((row, {}) for row in per_frame_pair)
+    else:
+        iterable = (({}, row) for row in pair_stats)
+
+    for idx, (pair_row, stat_row) in enumerate(iterable):
+        frame_a = stat_row.get("frame_index_a", pair_row.get("frame_index_a"))
+        frame_b = stat_row.get("frame_index_b", pair_row.get("frame_index_b"))
+        mag = pair_row.get("flow_mag_mean", stat_row.get("magnitude_mean"))
+        if frame_a is None or frame_b is None or mag is None:
+            continue
+        frame_a = int(frame_a)
+        frame_b = int(frame_b)
+        mag = float(mag)
+        midpoint = (frame_a + frame_b) / 2.0
+        risks.append(
+            {
+                "pairIndex": idx,
+                "frameIndexA": frame_a,
+                "frameIndexB": frame_b,
+                "timestampSec": frame_index_to_timestamp(video_path, int(midpoint)),
+                "riskScore": _pair_motion_score(mag, median=median, span=span),
+                "motionMagnitude": round(mag, 6),
+            }
+        )
+    return risks
+
+
+def build_module_timelines(
+    video_path: Path,
+    modules: list[Any],
+    *,
+    config: FusionConfig,
+) -> list[dict[str, Any]]:
+    """Build unified module timeline payloads for API response."""
+    by_module = {item.module: item for item in modules}
+    timelines: list[dict[str, Any]] = []
+
+    cnn = by_module.get("cnn")
+    if cnn:
+        per_frame = (cnn.details or {}).get("per_frame_scores") or []
+        frame_risks = build_frame_risks(video_path, per_frame)
+        threshold = config.module_thresholds["cnn"]
+        score = float(cnn.fake_score or 0.0)
+        timelines.append(
+            {
+                "module": "cnn",
+                "modelName": cnn.model_name,
+                "modelVersion": cnn.model_version,
+                "videoScore": round(score, 6),
+                "threshold": threshold,
+                "detected": score_detected(cnn.fake_score, threshold),
+                "frameRisks": frame_risks,
+                "clipRisks": [],
+                "pairRisks": [],
+                "suspiciousSegments": build_suspicious_segments(
+                    frame_risks,
+                    high_risk_threshold=config.suspicious_segment["high_risk_frame_threshold"],
+                    min_segment_sec=config.suspicious_segment["min_segment_sec"],
+                    reason="High CNN frame-level fake probability cluster",
+                ),
+            }
+        )
+
+    temporal = by_module.get("temporal")
+    if temporal:
+        details = temporal.details or {}
+        breakdown = details.get("score_breakdown") or {}
+        clip_risks = build_clip_risks(
+            video_path,
+            per_clip_scores=details.get("per_clip_scores") or breakdown.get("per_clip_scores") or [],
+            per_clip=breakdown.get("per_clip") or [],
+        )
+        threshold = config.module_thresholds["temporal"]
+        score = float(temporal.fake_score or 0.0)
+        clip_points = build_clip_segment_risks(clip_risks)
+        timelines.append(
+            {
+                "module": "temporal",
+                "modelName": temporal.model_name,
+                "modelVersion": temporal.model_version,
+                "videoScore": round(score, 6),
+                "threshold": threshold,
+                "detected": score_detected(temporal.fake_score, threshold),
+                "frameRisks": [],
+                "clipRisks": clip_risks,
+                "pairRisks": [],
+                "suspiciousSegments": build_suspicious_segments(
+                    clip_points,
+                    high_risk_threshold=threshold,
+                    min_segment_sec=config.suspicious_segment["min_segment_sec"],
+                    reason="High TimeSformer clip-level fake probability cluster",
+                ),
+            }
+        )
+
+    optical = by_module.get("optical")
+    if optical:
+        details = optical.details or {}
+        pair_stats = details.get("pair_stats") or []
+        per_frame_pair = details.get("per_frame_pair") or []
+        pair_risks = build_pair_risks(video_path, pair_stats, per_frame_pair=per_frame_pair or None)
+        threshold = config.module_thresholds["optical"]
+        score = float(optical.fake_score or 0.0)
+        pair_points = [
+            {"timestampSec": row["timestampSec"], "riskScore": row["riskScore"]}
+            for row in pair_risks
+        ]
+        timelines.append(
+            {
+                "module": "optical",
+                "modelName": optical.model_name,
+                "modelVersion": optical.model_version,
+                "videoScore": round(score, 6),
+                "threshold": threshold,
+                "detected": score_detected(optical.fake_score, threshold),
+                "frameRisks": [],
+                "clipRisks": [],
+                "pairRisks": pair_risks,
+                "suspiciousSegments": build_suspicious_segments(
+                    pair_points,
+                    high_risk_threshold=threshold,
+                    min_segment_sec=config.suspicious_segment["min_segment_sec"],
+                    reason="High GMFlow optical-flow motion anomaly cluster",
+                ),
+            }
+        )
+
+    return timelines
 
 
 def optical_score_from_aggregate(

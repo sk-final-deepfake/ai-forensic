@@ -13,8 +13,11 @@ from app.core.model_settings import ModelSettings, load_model_settings
 from app.schemas.ai_response import (
     AnalysisResponseMessage,
     AnalysisVideoResultItem,
+    ClipRiskItem,
     FrameRiskItem,
     ModelScoreItem,
+    ModuleTimelineItem,
+    PairRiskItem,
     SuspiciousSegmentItem,
 )
 from app.schemas.analysis import AnalysisRequest
@@ -22,7 +25,10 @@ from app.services.infer_bridge import InferRuntime, ModuleInferResult
 from app.services.late_fusion import (
     FusionConfig,
     build_analysis_reasons,
+    build_clip_risks,
     build_frame_risks,
+    build_module_timelines,
+    build_pair_risks,
     build_suspicious_segments,
     confidence_from_module_scores,
     fuse_scores,
@@ -113,7 +119,16 @@ def _mock_module_results() -> list[ModuleInferResult]:
             status="ok",
             fake_score=0.68,
             pred_label="fake",
-            details={},
+            details={
+                "per_clip_scores": [
+                    {
+                        "clip_index": 0,
+                        "fake_score": 0.81,
+                        "clip_start_frame": 0,
+                        "clip_end_frame": 80,
+                    }
+                ]
+            },
         ),
         ModuleInferResult(
             module="optical",
@@ -122,7 +137,12 @@ def _mock_module_results() -> list[ModuleInferResult]:
             status="ok",
             fake_score=0.31,
             pred_label="real",
-            details={},
+            details={
+                "pair_stats": [
+                    {"frame_index_a": 0, "frame_index_b": 1, "magnitude_mean": 0.42},
+                    {"frame_index_a": 35, "frame_index_b": 36, "magnitude_mean": 0.18},
+                ]
+            },
         ),
     ]
 
@@ -221,6 +241,45 @@ def build_response_from_modules(
     )
     suspicious_segments = [SuspiciousSegmentItem(**row) for row in suspicious_raw]
 
+    temporal = by_module.get("temporal")
+    optical = by_module.get("optical")
+    clip_risks_raw: list[dict] = []
+    if temporal and temporal.details:
+        breakdown = temporal.details.get("score_breakdown") or {}
+        clip_risks_raw = build_clip_risks(
+            video_path,
+            per_clip_scores=temporal.details.get("per_clip_scores") or [],
+            per_clip=breakdown.get("per_clip") or temporal.details.get("per_clip") or [],
+        )
+    clip_risks = [ClipRiskItem(**row) for row in clip_risks_raw]
+
+    pair_risks_raw: list[dict] = []
+    if optical and optical.details:
+        pair_risks_raw = build_pair_risks(
+            video_path,
+            optical.details.get("pair_stats") or [],
+            per_frame_pair=optical.details.get("per_frame_pair") or None,
+        )
+    pair_risks = [PairRiskItem(**row) for row in pair_risks_raw]
+
+    module_timelines_raw = build_module_timelines(video_path, modules, config=config)
+    module_timelines = [ModuleTimelineItem(**row) for row in module_timelines_raw]
+
+    temporal_segments = [
+        SuspiciousSegmentItem(**row)
+        for row in next(
+            (t["suspiciousSegments"] for t in module_timelines_raw if t["module"] == "temporal"),
+            [],
+        )
+    ]
+    optical_segments = [
+        SuspiciousSegmentItem(**row)
+        for row in next(
+            (t["suspiciousSegments"] for t in module_timelines_raw if t["module"] == "optical"),
+            [],
+        )
+    ]
+
     model_scores = _module_score_items(
         fusion_score=fusion_score,
         fusion_detected=fusion_detected,
@@ -233,7 +292,12 @@ def build_response_from_modules(
         deepfakeDetected=fusion_detected,
         deepfakeScore=round(fusion_score, 6),
         frameRisks=frame_risks,
+        clipRisks=clip_risks,
+        pairRisks=pair_risks,
         suspiciousSegments=suspicious_segments,
+        temporalSuspiciousSegments=temporal_segments,
+        opticalSuspiciousSegments=optical_segments,
+        moduleTimelines=module_timelines,
         modelName=FUSION_MODEL_NAME,
         modelVersion=config.fusion_version,
         modelScores=model_scores,

@@ -415,10 +415,28 @@ def infer_video(
         breakdown.update(face_cropper.to_metadata())
         return {
             "file": video_path.name,
-            "status": "no_face",
+            "status": face_cropper.no_face_status(),
             "fake_score": None,
             "pred_label": None,
             "frames_used": 0,
+            "score_breakdown": breakdown,
+        }
+
+    min_faces = max(1, int(getattr(face_cropper.config, "min_sample_faces", 1)))
+    if len(face_samples) < min_faces:
+        breakdown = empty_score_breakdown(
+            threshold=threshold,
+            frames_sampled=len(samples),
+            frames_without_face=len(samples) - len(face_samples),
+        )
+        breakdown.update(face_cropper.to_metadata())
+        breakdown["frames_with_face"] = len(face_samples)
+        return {
+            "file": video_path.name,
+            "status": face_cropper.no_face_status(),
+            "fake_score": None,
+            "pred_label": None,
+            "frames_used": len(face_samples),
             "score_breakdown": breakdown,
         }
 

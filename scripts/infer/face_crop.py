@@ -1,4 +1,8 @@
-"""Face crop utilities for video CNN infer (Haar vs MediaPipe)."""
+"""Face crop utilities for video CNN / transformer infer.
+
+Production default: OpenCV YuNet human-face detector (method=yunet, human_only=True).
+Legacy: Haar / MediaPipe blaze-face (human_only=False only).
+"""
 from __future__ import annotations
 
 import urllib.request
@@ -13,6 +17,11 @@ _MP_MODEL_URLS = {
     0: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
     1: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_full_range/float16/1/blaze_face_full_range.tflite",
 }
+_YUNET_MODEL_URL = (
+    "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/"
+    "face_detection_yunet_2023mar.onnx"
+)
+NO_HUMAN_FACE_STATUS = "no_human_face"
 
 
 def _mediapipe_model_cache_dir() -> Path:
@@ -30,14 +39,31 @@ def _ensure_mediapipe_model(model_selection: int) -> Path:
     return path
 
 
+def _opencv_model_cache_dir() -> Path:
+    return Path.home() / ".cache" / "forenshield" / "opencv"
+
+
+def _ensure_yunet_model() -> Path:
+    cache_dir = _opencv_model_cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = cache_dir / "face_detection_yunet_2023mar.onnx"
+    if not path.is_file():
+        urllib.request.urlretrieve(_YUNET_MODEL_URL, path)
+    return path
+
+
 @dataclass(frozen=True)
 class FaceCropConfig:
-    method: str = "haar"  # haar | mediapipe
+    method: str = "yunet"  # yunet | mediapipe | haar
     size: int = 256
     padding: float = 0.2
     square: bool = True
     mediapipe_model_selection: int = 1
     mediapipe_min_confidence: float = 0.5
+    human_only: bool = True
+    yunet_score_threshold: float = 0.75
+    yunet_nms_threshold: float = 0.3
+    min_sample_faces: int = 4
 
 
 def _clip_bbox(x1: int, y1: int, x2: int, y2: int, w_img: int, h_img: int) -> tuple[int, int, int, int]:
@@ -86,10 +112,17 @@ def _resize_crop(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int, size: in
 class FaceCropper:
     def __init__(self, config: FaceCropConfig | None = None) -> None:
         self.config = config or FaceCropConfig()
+        if self.config.human_only and self.config.method in {"haar", "mediapipe"}:
+            raise ValueError(
+                "human_only=True requires method='yunet' (OpenCV YuNet human-face detector). "
+                f"Got method={self.config.method!r}."
+            )
         self._haar: cv2.CascadeClassifier | None = None
         self._mp_detector: Any = None
         self._mp_api: str | None = None
         self._mp_image_module: Any = None
+        self._yunet: cv2.FaceDetectorYN | None = None
+        self._yunet_input_size: tuple[int, int] | None = None
 
     @property
     def method(self) -> str:
@@ -148,6 +181,40 @@ class FaceCropper:
             self._mp_detector = None
             self._mp_api = None
             self._mp_image_module = None
+        self._yunet = None
+        self._yunet_input_size = None
+
+    def no_face_status(self) -> str:
+        return NO_HUMAN_FACE_STATUS if self.config.human_only else "no_face"
+
+    def _yunet_detector(self, w_img: int, h_img: int) -> cv2.FaceDetectorYN:
+        size = (w_img, h_img)
+        if self._yunet is None or self._yunet_input_size != size:
+            model_path = _ensure_yunet_model()
+            self._yunet = cv2.FaceDetectorYN.create(
+                str(model_path),
+                "",
+                size,
+                self.config.yunet_score_threshold,
+                self.config.yunet_nms_threshold,
+                5000,
+            )
+            self._yunet_input_size = size
+        else:
+            self._yunet.setInputSize(size)
+        return self._yunet
+
+    def detect_human_face_bbox(self, frame: np.ndarray) -> tuple[int, int, int, int] | None:
+        """Return (x, y, w, h) for the largest human face, or None."""
+        if self.config.method != "yunet":
+            return None
+        h_img, w_img = frame.shape[:2]
+        detector = self._yunet_detector(w_img, h_img)
+        _, faces = detector.detect(frame)
+        if faces is None or len(faces) == 0:
+            return None
+        best = max(faces, key=lambda f: float(f[2]) * float(f[3]))
+        return int(best[0]), int(best[1]), int(best[2]), int(best[3])
 
     def __enter__(self) -> FaceCropper:
         return self
@@ -156,9 +223,26 @@ class FaceCropper:
         self.close()
 
     def crop(self, frame: np.ndarray) -> np.ndarray | None:
+        if self.config.method == "yunet":
+            return self._crop_yunet(frame)
         if self.config.method == "mediapipe":
             return self._crop_mediapipe(frame)
         return self._crop_haar(frame)
+
+    def _crop_yunet(self, frame: np.ndarray) -> np.ndarray | None:
+        bbox = self.detect_human_face_bbox(frame)
+        if bbox is None:
+            return None
+        x, y, w, h = bbox
+        h_img, w_img = frame.shape[:2]
+        x1, y1, x2, y2 = _apply_padding_square(
+            x, y, w, h,
+            padding=self.config.padding,
+            square=self.config.square,
+            h_img=h_img,
+            w_img=w_img,
+        )
+        return _resize_crop(frame, x1, y1, x2, y2, self.config.size)
 
     def _crop_haar(self, frame: np.ndarray) -> np.ndarray | None:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -230,22 +314,33 @@ class FaceCropper:
             "crop_size": self.config.size,
             "crop_padding": self.config.padding,
             "crop_square": self.config.square,
+            "human_only": self.config.human_only,
+            "face_gate": "human_yunet" if self.config.method == "yunet" else self.config.method,
+            "yunet_score_threshold": self.config.yunet_score_threshold,
+            "min_sample_faces": self.config.min_sample_faces,
         }
 
 
 def create_face_cropper(
     *,
-    method: str = "haar",
+    method: str | None = None,
     size: int = 256,
     padding: float = 0.2,
     square: bool = True,
+    human_only: bool = True,
+    yunet_score_threshold: float = 0.75,
+    min_sample_faces: int = 4,
 ) -> FaceCropper:
+    resolved_method = method or ("yunet" if human_only else "haar")
     return FaceCropper(
         FaceCropConfig(
-            method=method,
+            method=resolved_method,
             size=size,
             padding=padding,
             square=square,
+            human_only=human_only,
+            yunet_score_threshold=yunet_score_threshold,
+            min_sample_faces=min_sample_faces,
         )
     )
 
@@ -257,8 +352,11 @@ def crop_face(
     *,
     padding: float = 0.2,
     square: bool = False,
+    face_cropper: FaceCropper | None = None,
 ) -> np.ndarray | None:
-    """Legacy Haar crop (backward compatible). Prefer FaceCropper."""
+    """Crop a face patch. Prefer face_cropper (YuNet human gate) over legacy Haar."""
+    if face_cropper is not None:
+        return face_cropper.crop(frame)
     del face_cascade
-    cropper = create_face_cropper(method="haar", size=size, padding=padding, square=square)
+    cropper = create_face_cropper(method="haar", size=size, padding=padding, square=square, human_only=False)
     return cropper.crop(frame)

@@ -202,6 +202,9 @@ forgery/models/deploy/profile/thresholds/v1.0.0/
 
 ## S3 경로 매핑
 
+> **딥페이크 S3 정리 (폴더명 = 용도):** [S3_DEEPFAKE_FOLDER_LAYOUT.md](./S3_DEEPFAKE_FOLDER_LAYOUT.md)  
+> 마이그레이션(복사만): `scripts/upload/s3_reorganize_deepfake_layout.sh`
+
 ### Models 버킷
 
 ```text

@@ -76,6 +76,15 @@ class ModelScoreItem(BaseModel):
     modelVersion: str
 
 
+class RepresentativeFrameItem(BaseModel):
+    timeSec: float | None = None
+    timestamp: str | None = None
+    frameNumber: int | None = None
+    score: float | None = None
+    imageUrl: str | None = None
+    heatmapUrl: str | None = None
+
+
 class AnalysisVideoResultItem(BaseModel):
     type: Literal["video"] = "video"
     modelName: str | None = None
@@ -98,6 +107,9 @@ class AnalysisVideoResultItem(BaseModel):
     opticalSuspiciousSegments: list[SuspiciousSegmentItem] | None = None
     moduleTimelines: list[ModuleTimelineItem] | None = None
     modelScores: list[ModelScoreItem] | None = None
+    representativeFrames: list[RepresentativeFrameItem] | None = None
+    heatmapImageUrl: str | None = None
+    overlayVideoUrl: str | None = None
 
 
 class AnalysisResponseMessage(BaseModel):

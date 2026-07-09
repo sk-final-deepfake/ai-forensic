@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.services.visualization_artifacts import build_visualization_artifacts
 from gpu_worker.config import WorkerConfig
 from gpu_worker.pipeline.fusion import FusionResult, apply_late_fusion, load_fusion_config
 from gpu_worker.pipeline.module_infer import (
@@ -24,6 +26,8 @@ from gpu_worker.schemas import (
     PairRiskItem,
     SuspiciousSegmentItem,
 )
+
+logger = logging.getLogger("gpu_worker.pipeline.response_builder")
 
 
 def _utc_now() -> str:
@@ -54,6 +58,17 @@ def _to_pair_risks(rows: list[dict[str, Any]]) -> list[PairRiskItem]:
 
 def _to_segments(rows: list[dict[str, Any]]) -> list[SuspiciousSegmentItem]:
     return [SuspiciousSegmentItem(**row) for row in rows]
+
+
+def _to_visualization_scores(frame_risks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "frame_index": int(row["frameIndex"]),
+            "fake_score": float(row["riskScore"]),
+        }
+        for row in frame_risks
+        if row.get("frameIndex") is not None and row.get("riskScore") is not None
+    ]
 
 
 def _build_model_scores(
@@ -144,6 +159,28 @@ def build_analysis_response(
     model_scores = _build_model_scores(fusion, modules, fusion_config)
     module_timelines = _build_module_timelines(modules, fusion_config)
     fusion_meta = _model_meta(fusion_config, "fusion")
+    representative_frames = None
+    heatmap_image_url = None
+    overlay_video_url = None
+
+    try:
+        viz = build_visualization_artifacts(
+            video_path=video_path,
+            per_frame_scores=_to_visualization_scores(cnn.frame_risks),
+            evidence_id=evidence_id,
+            analysis_request_id=analysis_request_id,
+            work_dir=cfg.work_dir / "visualization" / f"{evidence_id}_{analysis_request_id}",
+        )
+        if viz is not None:
+            representative_frames = viz.representative_frames
+            heatmap_image_url = viz.heatmap_image_url
+            overlay_video_url = viz.overlay_video_url
+    except Exception:
+        logger.exception(
+            "Failed to build visualization artifacts: evidenceId=%s analysisRequestId=%s",
+            evidence_id,
+            analysis_request_id,
+        )
 
     video_item = AnalysisVideoResultItem(
         modelName=str(fusion_meta.get("modelName", "Late Fusion")),
@@ -158,6 +195,9 @@ def build_analysis_response(
         opticalSuspiciousSegments=_to_segments(optical.optical_suspicious_segments) or None,
         moduleTimelines=module_timelines,
         modelScores=model_scores,
+        representativeFrames=representative_frames,
+        heatmapImageUrl=heatmap_image_url,
+        overlayVideoUrl=overlay_video_url,
     )
 
     return AnalysisResponseMessage(

@@ -18,8 +18,10 @@ from app.schemas.ai_response import (
     ModelScoreItem,
     ModuleTimelineItem,
     PairRiskItem,
+    RepresentativeFrameItem,
     SuspiciousSegmentItem,
 )
+from app.services.visualization_artifacts import build_visualization_artifacts
 from app.schemas.analysis import AnalysisRequest
 from app.services.infer_bridge import InferRuntime, ModuleInferResult
 from app.services.late_fusion import (
@@ -191,6 +193,7 @@ def build_response_from_modules(
     modules: list[ModuleInferResult],
     *,
     config: FusionConfig,
+    work_dir: Path | None = None,
 ) -> AnalysisResponseMessage:
     by_module = {item.module: item for item in modules}
     cnn = by_module.get("cnn")
@@ -310,6 +313,25 @@ def build_response_from_modules(
         config=config,
     )
 
+    representative_frames: list[RepresentativeFrameItem] = []
+    heatmap_image_url: str | None = None
+    overlay_video_url: str | None = None
+    if work_dir is not None and per_frame and video_path.is_file():
+        try:
+            viz = build_visualization_artifacts(
+                video_path=video_path,
+                per_frame_scores=per_frame,
+                evidence_id=_resolve_evidence_id(request),
+                analysis_request_id=request.analysisRequestId,
+                work_dir=work_dir / "visualization",
+            )
+            if viz is not None:
+                representative_frames = [RepresentativeFrameItem(**row) for row in viz.representative_frames]
+                heatmap_image_url = viz.heatmap_image_url
+                overlay_video_url = viz.overlay_video_url
+        except Exception:
+            pass
+
     video_result = AnalysisVideoResultItem(
         deepfakeDetected=fusion_detected,
         deepfakeScore=round(fusion_score, 6),
@@ -324,6 +346,9 @@ def build_response_from_modules(
         modelVersion=config.fusion_version,
         modelScores=model_scores,
         evidence=reasons,
+        representativeFrames=representative_frames,
+        heatmapImageUrl=heatmap_image_url,
+        overlayVideoUrl=overlay_video_url,
     )
 
     return AnalysisResponseMessage(
@@ -377,7 +402,13 @@ def analyze_video_request(
             _verify_sha256(video_path, _resolve_original_hash(request))
             runtime = InferRuntime(settings)
             modules = runtime.analyze_modules(video_path)
-            return build_response_from_modules(request, video_path, modules, config=config)
+            return build_response_from_modules(
+                request,
+                video_path,
+                modules,
+                config=config,
+                work_dir=Path(tmp),
+            )
     except FileNotFoundError as exc:
         return _failed_response(request, error_code="MODEL_WEIGHTS_NOT_FOUND", message=str(exc))
     except requests.RequestException as exc:

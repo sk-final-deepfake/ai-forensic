@@ -62,6 +62,17 @@ class ModelScoreItem(BaseModel):
     modelVersion: str | None = None
 
 
+class RepresentativeFrameItem(BaseModel):
+    """High-risk frame thumbnails for detail UI (FE contract)."""
+
+    timeSec: float | None = None
+    timestamp: str | None = None
+    frameNumber: int | None = None
+    score: float | None = None
+    imageUrl: str | None = None
+    heatmapUrl: str | None = None
+
+
 class AnalysisVideoResultItem(BaseModel):
     type: Literal["video"] = "video"
     lipSyncDetected: bool = False
@@ -85,6 +96,9 @@ class AnalysisVideoResultItem(BaseModel):
     modelVersion: str | None = None
     modelScores: list[ModelScoreItem] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)
+    representativeFrames: list[RepresentativeFrameItem] = Field(default_factory=list)
+    heatmapImageUrl: str | None = None
+    overlayVideoUrl: str | None = None
 
 
 class AnalysisResponseMessage(BaseModel):

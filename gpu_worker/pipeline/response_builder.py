@@ -71,6 +71,27 @@ def _to_visualization_scores(frame_risks: list[dict[str, Any]]) -> list[dict[str
     ]
 
 
+def _fallback_visualization_scores(video_path: Path, score: float, fps: float) -> list[dict[str, Any]]:
+    """Create coarse visualization points when the model returns only a video-level score."""
+    try:
+        import cv2
+    except ImportError:
+        return [{"frame_index": 0, "fake_score": score}]
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return [{"frame_index": 0, "fake_score": score}]
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    cap.release()
+
+    step = max(1, int(fps))
+    max_frames = min(frame_count if frame_count > 0 else step, int(max(fps, fps * 60)))
+    return [
+        {"frame_index": frame_index, "fake_score": score}
+        for frame_index in range(0, max_frames, step)
+    ] or [{"frame_index": 0, "fake_score": score}]
+
+
 def _build_model_scores(
     fusion: FusionResult,
     modules: dict[str, ModuleRunResult],
@@ -164,9 +185,27 @@ def build_analysis_response(
     overlay_video_url = None
 
     try:
+        visualization_scores = _to_visualization_scores(cnn.frame_risks)
+        if not visualization_scores:
+            visualization_scores = _fallback_visualization_scores(video_path, cnn.video_score, fps)
+            logger.info(
+                "Using fallback visualization scores: evidenceId=%s analysisRequestId=%s score=%s points=%s",
+                evidence_id,
+                analysis_request_id,
+                cnn.video_score,
+                len(visualization_scores),
+            )
+        else:
+            logger.info(
+                "Using CNN frame risks for visualization: evidenceId=%s analysisRequestId=%s points=%s",
+                evidence_id,
+                analysis_request_id,
+                len(visualization_scores),
+            )
+
         viz = build_visualization_artifacts(
             video_path=video_path,
-            per_frame_scores=_to_visualization_scores(cnn.frame_risks),
+            per_frame_scores=visualization_scores,
             evidence_id=evidence_id,
             analysis_request_id=analysis_request_id,
             work_dir=cfg.work_dir / "visualization" / f"{evidence_id}_{analysis_request_id}",
@@ -175,6 +214,21 @@ def build_analysis_response(
             representative_frames = viz.representative_frames
             heatmap_image_url = viz.heatmap_image_url
             overlay_video_url = viz.overlay_video_url
+            logger.info(
+                "Visualization artifacts attached: evidenceId=%s analysisRequestId=%s frames=%s heatmap=%s overlay=%s",
+                evidence_id,
+                analysis_request_id,
+                len(representative_frames or []),
+                bool(heatmap_image_url),
+                bool(overlay_video_url),
+            )
+        else:
+            logger.warning(
+                "Visualization artifact builder returned no artifacts: evidenceId=%s analysisRequestId=%s points=%s",
+                evidence_id,
+                analysis_request_id,
+                len(visualization_scores),
+            )
     except Exception:
         logger.exception(
             "Failed to build visualization artifacts: evidenceId=%s analysisRequestId=%s",

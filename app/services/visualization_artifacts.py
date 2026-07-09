@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,8 @@ from app.services.s3_artifact_upload import (
     s3_upload_enabled,
     upload_file,
 )
+
+logger = logging.getLogger("ai_fastapi.visualization_artifacts")
 
 
 @dataclass(frozen=True)
@@ -116,12 +119,32 @@ def _pick_representative_rows(per_frame_scores: list[dict[str, Any]], limit: int
 
 def _maybe_upload(local_path: Path, *, evidence_id: int, analysis_request_id: int, name: str) -> str | None:
     if not s3_upload_enabled():
+        logger.warning(
+            "S3 visualization upload is disabled: evidenceId=%s analysisRequestId=%s file=%s",
+            evidence_id,
+            analysis_request_id,
+            name,
+        )
         return None
     bucket = artifact_bucket()
     if not bucket:
+        logger.warning(
+            "S3 visualization bucket is not configured: evidenceId=%s analysisRequestId=%s file=%s",
+            evidence_id,
+            analysis_request_id,
+            name,
+        )
         return None
     key = f"{artifact_prefix(evidence_id, analysis_request_id)}/{name}"
-    return upload_file(local_path, bucket=bucket, key=key)
+    url = upload_file(local_path, bucket=bucket, key=key)
+    logger.info(
+        "Visualization artifact upload result: evidenceId=%s analysisRequestId=%s key=%s uploaded=%s",
+        evidence_id,
+        analysis_request_id,
+        key,
+        bool(url),
+    )
+    return url
 
 
 def build_visualization_artifacts(
@@ -132,8 +155,28 @@ def build_visualization_artifacts(
     analysis_request_id: int,
     work_dir: Path,
 ) -> VisualizationArtifacts | None:
-    if not _enabled() or not per_frame_scores:
+    if not _enabled():
+        logger.warning(
+            "Visualization artifacts are disabled: evidenceId=%s analysisRequestId=%s",
+            evidence_id,
+            analysis_request_id,
+        )
         return None
+    if not per_frame_scores:
+        logger.warning(
+            "Visualization artifacts skipped because frame scores are empty: evidenceId=%s analysisRequestId=%s",
+            evidence_id,
+            analysis_request_id,
+        )
+        return None
+
+    logger.info(
+        "Building visualization artifacts: evidenceId=%s analysisRequestId=%s scores=%s video=%s",
+        evidence_id,
+        analysis_request_id,
+        len(per_frame_scores),
+        video_path,
+    )
 
     ensure_infer_scripts_on_path()
     from face_crop import create_face_cropper
@@ -150,9 +193,21 @@ def build_visualization_artifacts(
             risk_score = float(row.get("fake_score", row.get("prob_fake")))
             frame, time_sec = _read_frame_at_index(video_path, frame_index)
             if frame is None:
+                logger.warning(
+                    "Representative frame could not be read: evidenceId=%s analysisRequestId=%s frameIndex=%s",
+                    evidence_id,
+                    analysis_request_id,
+                    frame_index,
+                )
                 continue
             bbox = _face_bbox_on_frame(cropper, frame)
             if bbox is None:
+                logger.warning(
+                    "Representative frame has no detected face: evidenceId=%s analysisRequestId=%s frameIndex=%s",
+                    evidence_id,
+                    analysis_request_id,
+                    frame_index,
+                )
                 continue
 
             frame_path = work_dir / f"frame_{idx:02d}.jpg"
@@ -197,8 +252,21 @@ def build_visualization_artifacts(
         )
 
         if not representative_frames and overlay_video_url is None:
+            logger.warning(
+                "Visualization artifacts produced no output: evidenceId=%s analysisRequestId=%s",
+                evidence_id,
+                analysis_request_id,
+            )
             return None
 
+        logger.info(
+            "Visualization artifacts built: evidenceId=%s analysisRequestId=%s frames=%s heatmap=%s overlay=%s",
+            evidence_id,
+            analysis_request_id,
+            len(representative_frames),
+            bool(heatmap_image_url),
+            bool(overlay_video_url),
+        )
         return VisualizationArtifacts(
             representative_frames=representative_frames,
             heatmap_image_url=heatmap_image_url,
@@ -232,6 +300,8 @@ def _build_overlay_video(
         return None
 
     max_frames = int(_overlay_max_seconds() * fps)
+    scored_frame_indices = sorted(score_by_frame)
+    nearest_window = max(1, int(fps))
     overlay_path = work_dir / "overlay.mp4"
     writer = cv2.VideoWriter(
         str(overlay_path),
@@ -250,6 +320,10 @@ def _build_overlay_video(
             if not ok or frame is None:
                 break
             risk = score_by_frame.get(frame_index)
+            if risk is None and scored_frame_indices:
+                nearest_index = min(scored_frame_indices, key=lambda idx: abs(idx - frame_index))
+                if abs(nearest_index - frame_index) <= nearest_window:
+                    risk = score_by_frame[nearest_index]
             if risk is not None:
                 bbox = _face_bbox_on_frame(cropper, frame)
                 if bbox is not None:
@@ -261,6 +335,13 @@ def _build_overlay_video(
         cap.release()
 
     if frame_index == 0 or not overlay_path.is_file():
+        logger.warning(
+            "Overlay video was not created: evidenceId=%s analysisRequestId=%s frames=%s path=%s",
+            evidence_id,
+            analysis_request_id,
+            frame_index,
+            overlay_path,
+        )
         return None
 
     return _maybe_upload(

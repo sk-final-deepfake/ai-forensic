@@ -5,4 +5,6 @@ python-dotenv
 requests
 httpx
 pika
+numpy
+opencv-python-headless
 torch

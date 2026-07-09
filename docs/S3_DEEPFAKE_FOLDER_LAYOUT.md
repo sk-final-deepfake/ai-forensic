@@ -192,6 +192,36 @@ APPLY=1 PHASE=models bash scripts/upload/s3_reorganize_deepfake_layout.sh
 
 ---
 
+## 5-1. Phase 2 — 옮긴 파일만 원본 삭제
+
+**위변조(`forgery-*`)·운영 `cases/{caseKey}/` 는 절대 삭제하지 않음.**
+
+스크립트: `scripts/upload/s3_prune_migrated_deepfake_sources.py`
+
+삭제 조건 (객체 단위):
+
+1. Phase 1 `sync` 에 포함된 **src → dst 쌍**에만 해당  
+2. `dst` 에 **동일 key·동일 ContentLength** 가 있을 때만 `src` 삭제  
+3. dst 가 없거나 크기가 다르면 **SKIP** (삭제 안 함)
+
+```bash
+source ~/forenShield-ai/config/env.local
+unset AWS_PROFILE
+
+# dry-run (삭제 예정 목록만)
+python3 ~/ai-forensic/scripts/upload/s3_prune_migrated_deepfake_sources.py
+
+# Evidence 원본만 삭제
+APPLY=1 PHASE=evidence python3 ~/ai-forensic/scripts/upload/s3_prune_migrated_deepfake_sources.py
+
+# Models 원본만 삭제
+APPLY=1 PHASE=models python3 ~/ai-forensic/scripts/upload/s3_prune_migrated_deepfake_sources.py
+```
+
+`SKIP (no matching dst)` 가 많으면 Phase 1 복사를 해당 prefix 에 대해 다시 실행한 뒤 prune 하세요.
+
+---
+
 ## 6. 환경 변수 (신규 prefix)
 
 `config/env.local` 또는 워커 `.env` 예시:

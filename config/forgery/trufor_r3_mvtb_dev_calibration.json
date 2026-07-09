@@ -1,0 +1,45 @@
+{
+  "model": "trufor",
+  "modality": "spatial",
+  "version": "v1.0.0",
+  "run_name": "forgery-r3-20260702-0338",
+  "adopted_at": "2026-07-02",
+  "status": "superseded_by_r5",
+  "superseded_by": "forgery-r5-20260702-0722",
+  "scope": "mvtb_only",
+  "strategy": "R3_oversample_x3 + Phase0_threshold_calibration",
+  "checkpoint": "models/dev/spatial/trufor/v1.0.0/forgery-r3-20260702-0338/trufor.pth.tar",
+  "pretrain": "models/test/spatial/trufor/v1.0.0/trufor.pth.tar",
+  "cache": "data/processed/trufor-gmflow-train-400-v2",
+  "config_exp": "trufor_forgery_video_r0",
+  "models_test": "not_promoted",
+  "models_deploy": "not_promoted",
+  "benchmarks": {
+    "mvtb": {
+      "adopted": true,
+      "dataset": "data/pull/evidence/mvtamperbench-200-s3",
+      "threshold": 0.158,
+      "run_id": "trufor-mvtb200-forgery-r3-20260702-0338-20260702-0353",
+      "metrics_path": "results/infer/trufor-mvtb200-forgery-r3-20260702-0338-20260702-0353/metrics.json",
+      "predictions_path": "results/infer/trufor-mvtb200-forgery-r3-20260702-0338-20260702-0353/predictions.json",
+      "confusion": { "tp": 95, "tn": 63, "fp": 37, "fn": 5 },
+      "accuracy": 0.79,
+      "roc_auc": 0.8341,
+      "gate": "TP>=63 & FP<=51",
+      "gate_pass": true,
+      "vs_baseline_at_0_5": { "tp": "63->95", "fp": "51->37", "accuracy": "0.560->0.790" }
+    },
+    "csvted": {
+      "adopted": false,
+      "note": "TruFor spatial 단독 한계 — temporal/fusion 별도. mvtb thr(0.158) 공유 금지.",
+      "optional_threshold_fp_le_11": 0.39,
+      "optional_confusion": { "tp": 12, "tn": 91, "fp": 9, "fn": 88 },
+      "run_id": "trufor-csvted200-forgery-r3-20260702-0338-20260702-0353"
+    }
+  },
+  "deferred": {
+    "r5_combined_training": "mvtb gate satisfied via calibration",
+    "csvted_trufor_threshold": "fusion_or_gmflow"
+  },
+  "doc": "docs/ai/17-TruFor-v5-원인1-BEST_KEY-개선-실험.md §9.18"
+}

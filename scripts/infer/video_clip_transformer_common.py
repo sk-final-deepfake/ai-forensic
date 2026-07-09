@@ -188,7 +188,7 @@ class ClipDetectorProtocol:
 def infer_video_clip_model(
     model: ClipDetectorProtocol,
     video_path: Path,
-    face_cascade: cv2.CascadeClassifier,
+    face_cascade: cv2.CascadeClassifier | None,
     device: torch.device,
     *,
     clip_to_tensor,
@@ -199,30 +199,45 @@ def infer_video_clip_model(
     max_clips: int = MAX_CLIPS,
     threshold: float = 0.5,
     export_embedding: bool = False,
+    face_cropper: object | None = None,
 ) -> dict:
     samples = read_frame_samples(video_path, num_frames=num_frames)
     face_samples: list[dict] = []
     for sample in samples:
-        crop = crop_face(sample["frame"], face_cascade, size=clip_size)
+        if face_cropper is not None:
+            crop = face_cropper.crop(sample["frame"])
+        else:
+            crop = crop_face(sample["frame"], face_cascade, size=clip_size)
         if crop is not None:
             face_samples.append({"frame_index": sample["frame_index"], "crop": crop})
 
-    if len(face_samples) < max(4, clip_frames // 2):
+    no_face_status = (
+        face_cropper.no_face_status()
+        if face_cropper is not None and hasattr(face_cropper, "no_face_status")
+        else "no_face"
+    )
+    min_faces = max(4, clip_frames // 2)
+    if face_cropper is not None and hasattr(face_cropper, "config"):
+        min_faces = max(min_faces, int(getattr(face_cropper.config, "min_sample_faces", 4)))
+    if len(face_samples) < min_faces:
+        breakdown = empty_clip_score_breakdown(
+            method=method,
+            threshold=threshold,
+            frames_sampled=len(samples),
+            frames_without_face=len(samples) - len(face_samples),
+            clip_frames=clip_frames,
+            clip_size=clip_size,
+            max_clips=max_clips,
+        )
+        if face_cropper is not None and hasattr(face_cropper, "to_metadata"):
+            breakdown.update(face_cropper.to_metadata())
         return {
             "file": video_path.name,
-            "status": "no_face",
+            "status": no_face_status,
             "fake_score": None,
             "pred_label": None,
             "frames_used": len(face_samples),
-            "score_breakdown": empty_clip_score_breakdown(
-                method=method,
-                threshold=threshold,
-                frames_sampled=len(samples),
-                frames_without_face=len(samples) - len(face_samples),
-                clip_frames=clip_frames,
-                clip_size=clip_size,
-                max_clips=max_clips,
-            ),
+            "score_breakdown": breakdown,
         }
 
     windows = pick_clip_windows(face_samples, clip_frames=clip_frames, max_clips=max_clips)

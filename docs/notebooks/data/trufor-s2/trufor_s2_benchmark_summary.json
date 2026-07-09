@@ -1,0 +1,71 @@
+{
+  "line": "S2",
+  "run_name": "forgery-s2-20260703-1419",
+  "checkpoint": "models/dev/spatial/trufor-s2/v1.0.0/forgery-s2-20260703-1419/trufor.pth.tar",
+  "strategy": "R5 recipe (recall BEST_KEY, epoch 8, skip-OOW, oversample x3)",
+  "benchmarks": {
+    "mvtb200": {
+      "data_root": "data/pull/evidence/mvtamperbench-200-s3",
+      "run_id": "trufor-mvtb200-forgery-s2-20260703-1419-20260703-1419",
+      "threshold_infer": 0.5,
+      "threshold_gate": 0.5,
+      "accuracy": 0.625,
+      "roc_auc": 0.68955,
+      "confusion": {
+        "tp": 70,
+        "tn": 55,
+        "fp": 45,
+        "fn": 30
+      }
+    },
+    "csvted200": {
+      "data_root": "data/pull/evidence/csvted-200-balanced",
+      "run_id": "trufor-csvted200-forgery-s2-20260703-1419-20260703-1419",
+      "threshold_infer": 0.5,
+      "accuracy": 0.65,
+      "roc_auc": 0.712,
+      "confusion": {
+        "tp": 46,
+        "tn": 84,
+        "fp": 16,
+        "fn": 54
+      }
+    }
+  },
+  "baseline_reference": {
+    "mvtb200": {
+      "threshold": 0.5,
+      "accuracy": 0.56,
+      "roc_auc": 0.5709,
+      "confusion": {
+        "tp": 63,
+        "tn": 49,
+        "fp": 51,
+        "fn": 37
+      }
+    },
+    "csvted200": {
+      "threshold": 0.5,
+      "accuracy": 0.565,
+      "roc_auc": 0.6285,
+      "confusion": {
+        "tp": 24,
+        "tn": 89,
+        "fp": 11,
+        "fn": 76
+      }
+    }
+  },
+  "r5_dev_reference": {
+    "mvtb200": {
+      "threshold": 0.185,
+      "accuracy": 0.885,
+      "confusion": {
+        "tp": 96,
+        "tn": 81,
+        "fp": 19,
+        "fn": 4
+      }
+    }
+  }
+}

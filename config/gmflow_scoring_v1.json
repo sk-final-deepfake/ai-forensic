@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "description": "GMFlow motion heuristic v1 — weighted 4-signal z-score vs real cohort",
+  "signal_weights": {
+    "temporal_jitter": 0.30,
+    "spatial_inconsistency_mean": 0.25,
+    "angle_dispersion_mean": 0.25,
+    "flow_mag_mean": 0.20
+  },
+  "per_profile_cohort": true,
+  "thresholds": {
+    "default": 0.5,
+    "ffpp_vox": null,
+    "celebdf": null,
+    "note": "Run run_gmflow_improvement_eval.py Youden sweep to fill profile thresholds"
+  }
+}

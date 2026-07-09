@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "fusion_version": "fusion-v1-tuned",
+  "method": "weighted",
+  "description": "Tuned on golden 200: Xception celeb1k + TimeSformer celeb1k + GMFlow rf_pooled",
+  "weights": {
+    "cnn": 0.85,
+    "temporal": 0.05,
+    "optical": 0.10
+  },
+  "threshold": 0.5743,
+  "module_thresholds": {
+    "cnn": 0.78,
+    "temporal": 0.5,
+    "optical": 0.417
+  },
+  "risk_levels": {
+    "medium_min": 40.0,
+    "high_min": 70.0
+  },
+  "suspicious_segment": {
+    "high_risk_frame_threshold": 0.65,
+    "min_segment_sec": 0.5
+  },
+  "model_versions": {
+    "cnn": "xception/v1.1.0-celeb1k",
+    "temporal": "timesformer/v1.1.0-celeb1k",
+    "optical": "gmflow/v1.0.0-rf_pooled",
+    "fusion": "late-fusion-v1-tuned"
+  }
+}

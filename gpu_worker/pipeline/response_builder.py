@@ -31,7 +31,20 @@ def _utc_now() -> str:
 
 
 def _model_meta(config: dict[str, Any], key: str) -> dict[str, str]:
-    return dict((config.get("models") or {}).get(key) or {})
+    models = config.get("models") or {}
+    model_versions = config.get("model_versions") or {}
+    meta = dict(models.get(key) or {})
+    if "modelVersion" not in meta and key in model_versions:
+        meta["modelVersion"] = str(model_versions[key])
+    if "modelName" not in meta:
+        default_names = {
+            "fusion": "Late Fusion",
+            "cnn": "Xception",
+            "temporal": "TimeSformer",
+            "optical": "GMFlow",
+        }
+        meta["modelName"] = default_names.get(key, key)
+    return meta
 
 
 def _module_thresholds(config: dict[str, Any]) -> dict[str, float]:
@@ -68,7 +81,7 @@ def _build_model_scores(
             detected=fusion.detected,
             score=fusion.score,
             modelName=str(fusion_meta.get("modelName", "Late Fusion")),
-            modelVersion=str(fusion_meta.get("modelVersion", config.get("fusion_version", "fusion-v3-gated"))),
+            modelVersion=str(fusion_meta.get("modelVersion", config.get("fusion_version", "fusion-v4-ts-gated"))),
         )
     ]
     mapping = {
@@ -147,7 +160,7 @@ def build_analysis_response(
 
     video_item = AnalysisVideoResultItem(
         modelName=str(fusion_meta.get("modelName", "Late Fusion")),
-        modelVersion=str(fusion_meta.get("modelVersion", fusion_config.get("fusion_version", "fusion-v3-gated"))),
+        modelVersion=str(fusion_meta.get("modelVersion", fusion_config.get("fusion_version", "fusion-v4-ts-gated"))),
         deepfakeDetected=fusion.detected,
         deepfakeScore=fusion.score,
         frameRisks=_to_frame_risks(cnn.frame_risks) or None,

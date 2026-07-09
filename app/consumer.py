@@ -12,7 +12,6 @@ from pika.adapters.blocking_connection import BlockingConnection
 from app.core.config import Settings
 from app.gpu_client import _utc_now, call_gpu_gateway
 from app.schemas.messaging import AnalysisJobMessage, AnalysisResponseMessage
-from app.services.consumer_visualization import attach_visualization_artifacts
 
 logger = logging.getLogger("ai_fastapi.consumer")
 
@@ -84,7 +83,6 @@ class AnalysisConsumer:
         )
         try:
             result = call_gpu_gateway(job, self._settings)
-            result = attach_visualization_artifacts(result, job)
             self._publish_result(channel, result)
         except Exception as exc:
             logger.exception("Gateway inference failed analysisRequestId=%s", job.analysisRequestId)

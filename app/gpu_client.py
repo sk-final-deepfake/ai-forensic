@@ -33,8 +33,6 @@ def _risk_from_scores(scores: dict[str, float]) -> tuple[float, str]:
         level = "HIGH"
     elif risk >= 40.0:
         level = "MEDIUM"
-    else:
-        level = "LOW"
     return risk, level
 
 

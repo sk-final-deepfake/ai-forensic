@@ -3,3 +3,6 @@ uvicorn[standard]
 pydantic
 python-dotenv
 requests
+httpx
+pika
+torch

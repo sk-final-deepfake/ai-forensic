@@ -82,7 +82,7 @@ class WorkerConfig:
         "GMFLOW_META",
         "models/test/video/optical-flow/gmflow/v1.0.0/gmflow_best.meta.json",
     )
-    fusion_config_path: str = _env("FUSION_CONFIG_PATH", "config/fusion_v3_gated.json")
+    fusion_config_path: str = _env("FUSION_CONFIG_PATH", "config/fusion_v4_ts_gated.json")
     sample_fps: float = float(_env("INFERENCE_SAMPLE_FPS", "1"))
     max_frames: int = int(_env("INFERENCE_MAX_FRAMES", "32"))
     deepfake_threshold: float = float(_env("DEEPFAKE_THRESHOLD", "0.5"))

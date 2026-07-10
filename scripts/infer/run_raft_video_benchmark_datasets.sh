@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# RAFT on S3 video-benchmark-datasets (celebdf + ffpp_vox, 50+50 each)
-# -> bundle under cases/test/video-benchmark-datasets/raft/{profile}/
+# RAFT on S3 bench datasets (celebdf + ffpp_vox, 50+50 each)
+# -> bundle under deepfake/results/infer/raft/{profile}/
 #
 # S3 input:
-#   s3://forenshield-evidence-877044078824/cases/test/video-benchmark-datasets/celebdf/{fake,real}/
-#   s3://forenshield-evidence-877044078824/cases/test/video-benchmark-datasets/ffpp_vox/{fake,real}/
+#   s3://.../deepfake/datasets/bench/celebdf/{fake,real}/
+#   s3://.../deepfake/datasets/bench/ffpp_vox/{fake,real}/
 #
 # S3 output:
-#   .../video-benchmark-datasets/raft/celebdf/{infer_summary.json,metrics.json,fake/,real/}
-#   .../video-benchmark-datasets/raft/ffpp_vox/...
+#   .../deepfake/results/infer/raft/celebdf/{infer_summary.json,metrics.json,fake/,real/}
+#   .../deepfake/results/infer/raft/ffpp_vox/...
 #
 # Usage (GPU):
 #   cd ~/forenShield-ai && source .venv/bin/activate && unset AWS_PROFILE
@@ -28,9 +28,13 @@ cd "$ROOT"
 source "$ROOT/.venv/bin/activate"
 unset AWS_PROFILE
 
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/s3_deepfake_paths.sh
+source "${_SCRIPT_DIR}/../common/s3_deepfake_paths.sh"
+
 BUCKET="${S3_EVIDENCE_BUCKET:-forenshield-evidence-877044078824}"
-S3_DATA_BASE="s3://${BUCKET}/cases/test/video-benchmark-datasets"
-S3_RAFT_BASE="${S3_DATA_BASE}/raft"
+S3_DATA_BASE="s3://${BUCKET}/${S3_DEEPFAKE_DATASETS_BENCH}"
+S3_RAFT_BASE="s3://${BUCKET}/${S3_DEEPFAKE_RESULTS_INFER}/raft"
 DATA_ROOT="${DATA_ROOT:-data/benchmark/video-benchmark-datasets}"
 OUT_DIR="${OUT_DIR:-results/raft-benchmark-bundle}"
 MAX_PAIRS="${MAX_PAIRS:-8}"
@@ -63,7 +67,7 @@ run_profile() {
     --run-id "${RUN_ID}" \
     --max-pairs "$MAX_PAIRS" \
     --max-side "$MAX_SIDE" \
-    --s3-dataset-prefix "cases/test/video-benchmark-datasets/${profile}"
+    --s3-dataset-prefix "$(s3_bench_profile "${profile}")"
 }
 
 upload_profile() {

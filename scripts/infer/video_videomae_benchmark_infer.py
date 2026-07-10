@@ -15,6 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from video_videomae_infer import load_model, run_directory
 from video_xception_infer import compute_metrics
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+import s3_deepfake_paths as s3p
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="VideoMAE benchmark infer (real + fake)")
@@ -112,7 +115,7 @@ def main() -> None:
     print()
     print("bundle + S3:")
     print(f"  python3 scripts/infer/bundle_xception_benchmark_report.py {run_id} --root .")
-    print("  S3_REPORT_PREFIX=cases/test/video-videomae-benchmark/reports \\")
+    print(f"  S3_REPORT_PREFIX={s3p.LEGACY_VIDEOMAE} \\")
     print(f"    UPLOAD_VIDEOS=0 bash scripts/upload/s3_upload_video_infer_results.sh {run_id}")
 
 

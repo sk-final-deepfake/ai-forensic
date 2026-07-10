@@ -127,7 +127,7 @@ buckets:
 
 pull:
   evidence_prefix: cases/
-  models_prefix: video/
+  models_prefix: deepfake/deploy/video/
   golden_prefix: golden-set/
 
 upload:
@@ -137,7 +137,9 @@ upload:
 
 tracks:
   deepfake:
-    s3_benchmark_prefix: cases/test/video-benchmark-datasets/
+    s3_benchmark_prefix: deepfake/datasets/bench/
+    s3_infer_prefix: deepfake/results/infer/
+    s3_legacy_reports_prefix: deepfake/archive/legacy-benchmarks/
   forgery:
     s3_benchmark_prefix: cases/test/forgery-benchmark-datasets/
 EOF
@@ -153,7 +155,7 @@ models:
       test: deepfake/models/test/video/xception/${MODEL_VERSION}
       dev: deepfake/models/dev/video/xception/${MODEL_VERSION}
       deploy: deepfake/models/deploy/video/xception/${MODEL_VERSION}
-    s3_deploy_prefix: video/xception/${MODEL_VERSION}
+    s3_deploy_prefix: deepfake/deploy/video/xception/${MODEL_VERSION}
   - id: convnext
     modality: video
     version: ${MODEL_VERSION}

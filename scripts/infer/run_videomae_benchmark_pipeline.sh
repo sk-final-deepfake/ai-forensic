@@ -17,9 +17,13 @@ set -eu
 ROOT="${FORENSHIELD_AI_ROOT:-$HOME/forenShield-ai}"
 cd "${ROOT}"
 
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/s3_deepfake_paths.sh
+source "${_SCRIPT_DIR}/../common/s3_deepfake_paths.sh"
+
 WEIGHTS="${WEIGHTS:-models/test/video/videomae/v1.0.0/videomae_finetuned.pth}"
 RUN_ID="${RUN_ID:-videomae-benchmark-$(date -u +%Y%m%d-%H%M)}"
-S3_PREFIX="${S3_REPORT_PREFIX:-cases/test/video-videomae-benchmark/reports}"
+S3_PREFIX="${S3_REPORT_PREFIX:-$(s3_legacy_reports video-videomae-benchmark)}"
 UPLOAD_VIDEOS="${UPLOAD_VIDEOS:-0}"
 TRAIN_REAL="${TRAIN_REAL:-data/train/video/voxceleb/real}"
 TRAIN_FAKE_POOL="${TRAIN_FAKE_POOL:-data/raw/faceforensics/manipulated_sequences/DeepFakeDetection/c40/videos}"

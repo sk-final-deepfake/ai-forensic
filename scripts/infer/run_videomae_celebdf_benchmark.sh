@@ -24,12 +24,16 @@ cd "$ROOT"
 source "$ROOT/.venv/bin/activate"
 unset AWS_PROFILE
 
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/s3_deepfake_paths.sh
+source "${_SCRIPT_DIR}/../common/s3_deepfake_paths.sh"
+
 DATASET_DIR="${DATASET_DIR:-data/test/video/celeb-df-v2}"
 THRESHOLD="${THRESHOLD:-0.5}"
 MAX_CLIPS="${MAX_CLIPS:-4}"
 WEIGHTS="${WEIGHTS:-models/test/video/videomae/v1.0.0/videomae_finetuned_unfrozen.pth}"
 UPLOAD_VIDEOS="${UPLOAD_VIDEOS:-1}"
-S3_REPORT_PREFIX="${S3_REPORT_PREFIX:-cases/test/video-videomae-celebdf-benchmark/reports}"
+S3_REPORT_PREFIX="${S3_REPORT_PREFIX:-$(s3_legacy_reports video-videomae-celebdf-benchmark)}"
 RUN_ID="${RUN_ID:-videomae-celebdf-benchmark-$(date -u +%Y%m%d-%H%M)}"
 
 FAKE_DIR="$ROOT/$DATASET_DIR/fake"

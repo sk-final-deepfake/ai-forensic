@@ -23,6 +23,10 @@ cd "$ROOT"
 source "$ROOT/.venv/bin/activate"
 unset AWS_PROFILE
 
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/s3_deepfake_paths.sh
+source "${_SCRIPT_DIR}/../common/s3_deepfake_paths.sh"
+
 DATASET_DIR="${DATASET_DIR:-data/test/video/celeb-df-v2}"
 THRESHOLD="${THRESHOLD:-0.5}"
 MAX_CLIPS="${MAX_CLIPS:-4}"
@@ -33,12 +37,12 @@ SKIP_INFER="${SKIP_INFER:-0}"
 case "$MODEL" in
   timesformer)
     WEIGHTS="${WEIGHTS:-models/test/video/timesformer/v1.0.0/timesformer_finetuned.pth}"
-    S3_REPORT_PREFIX="${S3_REPORT_PREFIX:-cases/test/video-timesformer-celebdf-benchmark/reports}"
+    S3_REPORT_PREFIX="${S3_REPORT_PREFIX:-$(s3_legacy_reports video-timesformer-celebdf-benchmark)}"
     RUN_ID="${RUN_ID:-timesformer-celebdf-benchmark-$(date -u +%Y%m%d-%H%M)}"
     ;;
   video-swin)
     WEIGHTS="${WEIGHTS:-models/test/video/video-swin/v1.0.0/video_swin_finetuned.pth}"
-    S3_REPORT_PREFIX="${S3_REPORT_PREFIX:-cases/test/video-swin-celebdf-benchmark/reports}"
+    S3_REPORT_PREFIX="${S3_REPORT_PREFIX:-$(s3_legacy_reports video-swin-celebdf-benchmark)}"
     RUN_ID="${RUN_ID:-video-swin-celebdf-benchmark-$(date -u +%Y%m%d-%H%M)}"
     ;;
   *)

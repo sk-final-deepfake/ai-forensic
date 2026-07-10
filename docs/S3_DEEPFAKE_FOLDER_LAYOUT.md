@@ -187,7 +187,8 @@ APPLY=1 PHASE=models bash scripts/upload/s3_reorganize_deepfake_layout.sh
 
 - `APPLY=0` (기본): `--dryrun` 만 출력  
 - **삭제 없음** — `aws s3 sync` 복사만  
-- 완료 후 신규 경로 목록으로 검증, 스크립트·노트북 prefix를 점진적으로 `deepfake/` 로 전환  
+- 완료 후 신규 경로 목록으로 검증  
+- **스크립트 기본 prefix**는 `scripts/common/s3_deepfake_paths.{py,sh}` 로 `deepfake/` 사용 (env로 override 가능)  
 - 레거시 prefix 삭제는 팀 합의 + 30일 유예 후 별도 작업
 
 ---

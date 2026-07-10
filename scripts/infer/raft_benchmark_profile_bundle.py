@@ -17,6 +17,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+import s3_deepfake_paths as s3p
+
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -41,7 +44,7 @@ def main() -> None:
     parser.add_argument(
         "--s3-dataset-prefix",
         default=None,
-        help="optional S3 prefix for metadata (cases/test/video-benchmark-datasets)",
+        help=f"optional S3 prefix for metadata ({s3p.DATASETS_BENCH}/{{profile}})",
     )
     args = parser.parse_args()
 
@@ -67,7 +70,7 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     backend = BACKENDS["raft"](root, device)
 
-    s3_prefix = args.s3_dataset_prefix or f"cases/test/video-benchmark-datasets/{profile}"
+    s3_prefix = args.s3_dataset_prefix or s3p.bench_profile(profile)
 
     print("run_id:", run_id)
     print("profile:", profile)
@@ -134,7 +137,7 @@ def main() -> None:
     )
     infer_summary["profile"] = profile
     infer_summary["s3_dataset_prefix"] = s3_prefix
-    infer_summary["s3_output_prefix"] = f"cases/test/video-benchmark-datasets/raft/{profile}"
+    infer_summary["s3_output_prefix"] = s3p.infer_model("raft", profile)
     # Full per-video rows (all aggregate + pair_stats counts) for reporting.
     # Full per-video table rows (every top-level + aggregate + pair_stats field).
     infer_summary["videos"] = [

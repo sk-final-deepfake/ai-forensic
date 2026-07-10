@@ -16,6 +16,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+import s3_deepfake_paths as s3p
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Classifier infer bundle for one benchmark profile")
@@ -27,7 +30,7 @@ def main() -> None:
     parser.add_argument(
         "--s3-dataset-prefix",
         default=None,
-        help="cases/test/video-benchmark-datasets/{profile}",
+        help=f"{s3p.DATASETS_BENCH}/{{profile}}",
     )
     args = parser.parse_args()
 
@@ -75,8 +78,8 @@ def main() -> None:
     fake_json_dir.mkdir(parents=True, exist_ok=True)
     real_json_dir.mkdir(parents=True, exist_ok=True)
 
-    s3_prefix = args.s3_dataset_prefix or f"cases/test/video-benchmark-datasets/{profile}"
-    s3_output = f"cases/test/video-benchmark-datasets/{model_slug}/{profile}"
+    s3_prefix = args.s3_dataset_prefix or s3p.bench_profile(profile)
+    s3_output = s3p.infer_model(model_slug, profile)
 
     predictions = json.loads(predictions_path.read_text(encoding="utf-8"))
     model_id = predictions.get("model", "")

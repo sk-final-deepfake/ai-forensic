@@ -14,10 +14,14 @@
 #   bash scripts/upload/s3_upload_optical_flow_results.sh optical-flow-celebdf-20260619-1200
 set -eu
 
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/s3_deepfake_paths.sh
+source "${_SCRIPT_DIR}/../common/s3_deepfake_paths.sh"
+
 RUN_ID="${1:?usage: $0 <run_id>}"
 ROOT="${FORENSHIELD_AI_ROOT:-$HOME/forenShield-ai}"
 BUCKET="${S3_EVIDENCE_BUCKET:-forenshield-evidence-877044078824}"
-PREFIX="${S3_REPORT_PREFIX:-cases/test/video-optical-flow-benchmark/reports}"
+PREFIX="${S3_REPORT_PREFIX:-$(s3_legacy_reports video-optical-flow-benchmark)}"
 UPLOAD_VIDEOS="${UPLOAD_VIDEOS:-1}"
 S3_DEST="s3://${BUCKET}/${PREFIX}/${RUN_ID}"
 

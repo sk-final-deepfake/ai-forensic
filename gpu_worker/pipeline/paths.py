@@ -11,6 +11,7 @@ def setup_script_paths(cfg: WorkerConfig) -> Path:
     candidates = [
         cfg.deepfake_root / "scripts" / "infer",
         cfg.deepfake_root / "scripts" / "eval",
+        cfg.project_root / "scripts" / "infer",
         cfg.project_root / "scripts" / "eval",
         cfg.project_root / "deepfake" / "scripts" / "infer",
     ]

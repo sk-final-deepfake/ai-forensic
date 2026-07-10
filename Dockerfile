@@ -11,5 +11,6 @@ COPY app ./app
 COPY gpu_worker/*.py ./gpu_worker/
 COPY gpu_worker/pipeline ./gpu_worker/pipeline
 COPY gpu_worker/models ./gpu_worker/models
+COPY scripts/infer/face_crop.py ./scripts/infer/face_crop.py
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

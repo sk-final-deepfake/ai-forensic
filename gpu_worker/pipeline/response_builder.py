@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,8 +23,11 @@ from gpu_worker.schemas import (
     ModelScoreItem,
     ModuleTimelineItem,
     PairRiskItem,
+    RepresentativeFrameItem,
     SuspiciousSegmentItem,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> str:
@@ -126,6 +130,52 @@ def _build_module_timelines(modules: dict[str, ModuleRunResult], config: dict[st
     return timelines
 
 
+def _attach_visualization_fields(
+    *,
+    video_path: Path,
+    cnn: ModuleRunResult,
+    evidence_id: int,
+    analysis_request_id: int,
+) -> dict[str, Any]:
+    try:
+        import tempfile
+
+        from app.services.response_visualization import (
+            build_visualization_payload,
+            per_frame_scores_from_cnn_raw,
+        )
+    except ImportError:
+        logger.warning("Visualization helpers unavailable on this host")
+        return {}
+
+    per_frame_scores = per_frame_scores_from_cnn_raw(cnn.raw)
+    if not per_frame_scores:
+        per_frame_scores = [
+            {"frame_index": row["frameIndex"], "fake_score": row["riskScore"]}
+            for row in cnn.frame_risks
+        ]
+    if not per_frame_scores:
+        return {}
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="forenshield-gpu-viz-") as tmp:
+            payload = build_visualization_payload(
+                video_path=video_path,
+                per_frame_scores=per_frame_scores,
+                evidence_id=evidence_id,
+                analysis_request_id=analysis_request_id,
+                work_dir=Path(tmp) / "visualization",
+            )
+            return payload or {}
+    except Exception:
+        logger.exception(
+            "Visualization generation failed evidenceId=%s analysisRequestId=%s",
+            evidence_id,
+            analysis_request_id,
+        )
+        return {}
+
+
 def build_analysis_response(
     *,
     analysis_request_id: int,
@@ -157,6 +207,12 @@ def build_analysis_response(
     model_scores = _build_model_scores(fusion, modules, fusion_config)
     module_timelines = _build_module_timelines(modules, fusion_config)
     fusion_meta = _model_meta(fusion_config, "fusion")
+    viz_payload = _attach_visualization_fields(
+        video_path=video_path,
+        cnn=cnn,
+        evidence_id=evidence_id,
+        analysis_request_id=analysis_request_id,
+    )
 
     video_item = AnalysisVideoResultItem(
         modelName=str(fusion_meta.get("modelName", "Late Fusion")),
@@ -171,6 +227,12 @@ def build_analysis_response(
         opticalSuspiciousSegments=_to_segments(optical.optical_suspicious_segments) or None,
         moduleTimelines=module_timelines,
         modelScores=model_scores,
+        representativeFrames=[
+            RepresentativeFrameItem(**row) for row in viz_payload.get("representativeFrames") or []
+        ]
+        or None,
+        heatmapImageUrl=viz_payload.get("heatmapImageUrl"),
+        overlayVideoUrl=viz_payload.get("overlayVideoUrl"),
     )
 
     return AnalysisResponseMessage(

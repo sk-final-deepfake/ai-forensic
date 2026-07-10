@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from app.schemas.messaging import (
+    AnalysisJobMessage,
+    AnalysisResponseMessage,
+    AnalysisVideoResultItem,
+    FrameRiskItem,
+)
+from app.services.response_visualization import (
+    attach_visualization_artifacts,
+    build_visualization_payload,
+    per_frame_scores_from_cnn_raw,
+    per_frame_scores_from_video_item,
+)
+
+
+class ResponseVisualizationTests(unittest.TestCase):
+    def test_per_frame_scores_from_cnn_raw(self) -> None:
+        rows = per_frame_scores_from_cnn_raw(
+            {
+                "score_breakdown": {
+                    "per_frame": [
+                        {"frame_index": 10, "prob_fake": 0.81},
+                        {"frame_index": 20, "prob_fake": 0.62},
+                    ]
+                }
+            }
+        )
+        self.assertEqual(rows[0]["frame_index"], 10)
+        self.assertAlmostEqual(rows[0]["fake_score"], 0.81)
+
+    def test_per_frame_scores_from_video_item(self) -> None:
+        video = AnalysisVideoResultItem(
+            deepfakeDetected=True,
+            deepfakeScore=0.8,
+            frameRisks=[
+                FrameRiskItem(frameIndex=5, timestampSec=0.2, riskScore=0.77),
+            ],
+        )
+        rows = per_frame_scores_from_video_item(video)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["frame_index"], 5)
+
+    def test_attach_visualization_skips_when_already_present(self) -> None:
+        job = AnalysisJobMessage(
+            analysisRequestId=1,
+            evidenceId=2,
+            filePath="evidence.mp4",
+        )
+        response = AnalysisResponseMessage(
+            analysisRequestId=1,
+            evidenceId=2,
+            status="COMPLETED",
+            analyzedAt="2026-07-10T00:00:00Z",
+            results=[
+                AnalysisVideoResultItem(
+                    deepfakeDetected=True,
+                    deepfakeScore=0.8,
+                    heatmapImageUrl="https://cdn.example/heatmap.jpg",
+                )
+            ],
+        )
+        updated = attach_visualization_artifacts(job, response)
+        self.assertEqual(updated.results[0].heatmapImageUrl, "https://cdn.example/heatmap.jpg")
+
+    @patch("app.services.response_visualization.build_visualization_payload")
+    @patch("app.services.response_visualization.download_messaging_job_video")
+    def test_attach_visualization_enriches_completed_response(
+        self,
+        mock_download: unittest.mock.Mock,
+        mock_payload: unittest.mock.Mock,
+    ) -> None:
+        mock_download.return_value = Path("video.mp4")
+        mock_payload.return_value = {
+            "representativeFrames": [
+                {
+                    "timeSec": 1.0,
+                    "timestamp": "00:01",
+                    "frameNumber": 25,
+                    "score": 0.9,
+                    "imageUrl": "https://cdn.example/frame.jpg",
+                    "heatmapUrl": "https://cdn.example/heatmap.jpg",
+                }
+            ],
+            "heatmapImageUrl": "https://cdn.example/heatmap.jpg",
+            "overlayVideoUrl": "https://cdn.example/overlay.mp4",
+        }
+
+        job = AnalysisJobMessage(
+            analysisRequestId=11,
+            evidenceId=22,
+            filePath="evidence.mp4",
+            presignedDownloadUrl="https://cdn.example/video.mp4",
+        )
+        response = AnalysisResponseMessage(
+            analysisRequestId=11,
+            evidenceId=22,
+            status="COMPLETED",
+            analyzedAt="2026-07-10T00:00:00Z",
+            results=[
+                AnalysisVideoResultItem(
+                    deepfakeDetected=True,
+                    deepfakeScore=0.8,
+                    frameRisks=[
+                        FrameRiskItem(frameIndex=25, timestampSec=1.0, riskScore=0.9),
+                    ],
+                )
+            ],
+        )
+
+        updated = attach_visualization_artifacts(job, response)
+        video = updated.results[0]
+        self.assertEqual(video.overlayVideoUrl, "https://cdn.example/overlay.mp4")
+        self.assertEqual(video.heatmapImageUrl, "https://cdn.example/heatmap.jpg")
+        self.assertEqual(len(video.representativeFrames or []), 1)
+
+    def test_build_visualization_payload_returns_none_without_scores(self) -> None:
+        payload = build_visualization_payload(
+            video_path=Path("missing.mp4"),
+            per_frame_scores=[],
+            evidence_id=1,
+            analysis_request_id=2,
+            work_dir=Path("."),
+        )
+        self.assertIsNone(payload)
+
+
+if __name__ == "__main__":
+    unittest.main()

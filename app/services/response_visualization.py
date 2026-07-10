@@ -79,7 +79,6 @@ def build_visualization_payload(
 
     return {
         "representativeFrames": viz.representative_frames,
-        "heatmapImageUrl": viz.heatmap_image_url,
         "overlayVideoUrl": viz.overlay_video_url,
     }
 
@@ -128,7 +127,7 @@ def download_messaging_job_video(job: AnalysisJobMessage, dest_dir: Path) -> Pat
 
 
 def _video_item_has_visualization(video: AnalysisVideoResultItem) -> bool:
-    if video.overlayVideoUrl or video.heatmapImageUrl:
+    if video.overlayVideoUrl:
         return True
     return bool(video.representativeFrames)
 
@@ -143,7 +142,6 @@ def _apply_visualization_payload(
     return video.model_copy(
         update={
             "representativeFrames": representative_frames,
-            "heatmapImageUrl": payload.get("heatmapImageUrl"),
             "overlayVideoUrl": payload.get("overlayVideoUrl"),
         }
     )
@@ -190,12 +188,11 @@ def attach_visualization_artifacts(
 
             updated_video = _apply_visualization_payload(video, payload)
             logger.info(
-                "Visualization attached analysisRequestId=%s evidenceId=%s frames=%s overlay=%s heatmap=%s",
+                "Visualization attached analysisRequestId=%s evidenceId=%s frames=%s overlay=%s",
                 job.analysisRequestId,
                 job.evidenceId,
                 len(updated_video.representativeFrames or []),
                 bool(updated_video.overlayVideoUrl),
-                bool(updated_video.heatmapImageUrl),
             )
             return response.model_copy(update={"results": [updated_video, *response.results[1:]]})
     except Exception:

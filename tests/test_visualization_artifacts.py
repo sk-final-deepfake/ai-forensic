@@ -128,9 +128,7 @@ class VisualizationArtifactIntegrationTests(unittest.TestCase):
             self.assertEqual(frame_item["frameNumber"], 3)
             self.assertAlmostEqual(frame_item["score"], 0.91, places=5)
             self.assertIsNone(frame_item["imageUrl"])
-            self.assertIsNone(frame_item["heatmapUrl"])
             self.assertTrue((Path(tmp) / "viz" / "frame_00.jpg").is_file())
-            self.assertTrue((Path(tmp) / "viz" / "frame_00_heatmap.jpg").is_file())
 
 
 if __name__ == "__main__":

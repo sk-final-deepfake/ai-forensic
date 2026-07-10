@@ -33,6 +33,84 @@ def normalize_face_crops(crops: list[np.ndarray]) -> np.ndarray:
     return (arr - IMAGENET_MEAN) / IMAGENET_STD
 
 
+def _collect_face_samples(
+    samples: list[dict],
+    *,
+    face_cropper: object | None,
+    face_cascade: cv2.CascadeClassifier | None,
+    clip_size: int,
+) -> list[dict]:
+    face_samples: list[dict] = []
+    for sample in samples:
+        if face_cropper is not None and hasattr(face_cropper, "crop_all"):
+            face_entries = face_cropper.crop_all(sample["frame"])
+        elif face_cropper is not None:
+            crop = face_cropper.crop(sample["frame"])
+            face_entries = (
+                [{"face_index": 0, "bbox": None, "crop": crop}]
+                if crop is not None
+                else []
+            )
+        else:
+            crop = crop_face(sample["frame"], face_cascade, size=clip_size)
+            face_entries = (
+                [{"face_index": 0, "bbox": None, "crop": crop}]
+                if crop is not None
+                else []
+            )
+        for entry in face_entries:
+            face_samples.append(
+                {
+                    "frame_index": sample["frame_index"],
+                    "face_index": int(entry.get("face_index", 0)),
+                    "bbox": entry.get("bbox"),
+                    "crop": entry["crop"],
+                }
+            )
+    return face_samples
+
+
+def _group_face_samples_by_slot(face_samples: list[dict]) -> dict[int, list[dict]]:
+    slots: dict[int, list[dict]] = {}
+    for sample in face_samples:
+        slots.setdefault(int(sample.get("face_index", 0)), []).append(sample)
+    for slot in slots.values():
+        slot.sort(key=lambda row: int(row["frame_index"]))
+    return slots
+
+
+def _aggregate_clip_prob_fake(per_clip: list[dict], aggregate: str) -> float:
+    if not per_clip:
+        return 0.0
+    probs = np.array([float(row["prob_fake"]) for row in per_clip], dtype=np.float64)
+    if aggregate == "max":
+        return float(np.max(probs))
+    return float(np.mean(probs))
+
+
+def _clip_per_frame_scores(per_clip: list[dict], face_samples: list[dict]) -> list[dict]:
+    lookup = {
+        (int(sample["frame_index"]), int(sample.get("face_index", 0))): sample
+        for sample in face_samples
+    }
+    scores: list[dict] = []
+    for row in per_clip:
+        face_index = int(row.get("face_index", 0))
+        fake_score = float(row["prob_fake"])
+        for frame_index in row.get("frame_indices") or []:
+            sample = lookup.get((int(frame_index), face_index), {})
+            entry = {
+                "frame_index": int(frame_index),
+                "face_index": face_index,
+                "fake_score": fake_score,
+            }
+            bbox = sample.get("bbox")
+            if bbox is not None:
+                entry["bbox"] = bbox
+            scores.append(entry)
+    return scores
+
+
 def pick_clip_windows(face_samples: list[dict], *, clip_frames: int, max_clips: int) -> list[list[dict]]:
     if len(face_samples) < clip_frames:
         return []
@@ -81,6 +159,9 @@ def build_clip_score_breakdown(
     clip_frames: int,
     clip_size: int,
     max_clips: int,
+    aggregate: str = "mean",
+    face_samples: list[dict] | None = None,
+    multi_face: bool = False,
 ) -> dict:
     classification_rows = [
         {
@@ -98,7 +179,10 @@ def build_clip_score_breakdown(
         }
         for row in per_clip
     ]
-    aggregate = _mean_classification_row(classification_rows, threshold=threshold)
+    aggregate_row = _mean_classification_row(classification_rows, threshold=threshold)
+    aggregate_fake_score = _aggregate_clip_prob_fake(per_clip, aggregate)
+    aggregate_row["prob_fake"] = _round4(aggregate_fake_score)
+    aggregate_row["pred_label"] = "fake" if aggregate_fake_score >= threshold else "real"
 
     prob_fake_values = np.array([row["prob_fake"] for row in per_clip], dtype=np.float64)
     margin_values = np.array([row["margin"] for row in per_clip], dtype=np.float64)
@@ -115,13 +199,23 @@ def build_clip_score_breakdown(
             "clip_index": row["clip_index"],
             "fake_score": row["prob_fake"],
             "frame_indices": row["frame_indices"],
+            **({"face_index": row["face_index"]} if row.get("face_index") is not None else {}),
         }
         for row in per_clip
     ]
+    per_frame_scores = (
+        _clip_per_frame_scores(per_clip, face_samples or [])
+        if face_samples
+        else per_clip_scores
+    )
+    unique_frames_with_face = len(
+        {int(row["frame_index"]) for row in (face_samples or []) if row.get("frame_index") is not None}
+    ) or len({idx for row in per_clip for idx in row["frame_indices"]})
 
     return {
         "schema_version": SCORE_BREAKDOWN_SCHEMA_VERSION,
         "method": method,
+        "aggregate_method": aggregate,
         "threshold": threshold,
         "margin_definition": "logit_fake_minus_logit_real",
         "entropy_log_base": "natural",
@@ -130,10 +224,12 @@ def build_clip_score_breakdown(
         "max_clips": max_clips,
         "clips_used": len(per_clip),
         "frames_sampled": frames_sampled,
-        "frames_with_face": len({idx for row in per_clip for idx in row["frame_indices"]}),
+        "frames_with_face": len(face_samples or []) or len({idx for row in per_clip for idx in row["frame_indices"]}),
+        "unique_frames_with_face": unique_frames_with_face,
         "frames_without_face": frames_without_face,
-        "aggregate": aggregate,
-        "aggregate_fake_score": aggregate["prob_fake"],
+        "multi_face": multi_face,
+        "aggregate": aggregate_row,
+        "aggregate_fake_score": aggregate_fake_score,
         "score_stats": {
             "prob_fake": _distribution_stats(prob_fake_values),
             "prob_real": _distribution_stats(prob_real_values),
@@ -146,7 +242,7 @@ def build_clip_score_breakdown(
         "frame_votes": {"fake": fake_clip_count, "real": real_clip_count},
         "per_clip": per_clip,
         "per_clip_scores": per_clip_scores,
-        "per_frame_scores": per_clip_scores,
+        "per_frame_scores": per_frame_scores,
     }
 
 
@@ -200,16 +296,16 @@ def infer_video_clip_model(
     threshold: float = 0.5,
     export_embedding: bool = False,
     face_cropper: object | None = None,
+    aggregate: str = "mean",
 ) -> dict:
     samples = read_frame_samples(video_path, num_frames=num_frames)
-    face_samples: list[dict] = []
-    for sample in samples:
-        if face_cropper is not None:
-            crop = face_cropper.crop(sample["frame"])
-        else:
-            crop = crop_face(sample["frame"], face_cascade, size=clip_size)
-        if crop is not None:
-            face_samples.append({"frame_index": sample["frame_index"], "crop": crop})
+    face_samples = _collect_face_samples(
+        samples,
+        face_cropper=face_cropper,
+        face_cascade=face_cascade,
+        clip_size=clip_size,
+    )
+    multi_face = bool(face_cropper is not None and hasattr(face_cropper, "crop_all"))
 
     no_face_status = (
         face_cropper.no_face_status()
@@ -219,18 +315,20 @@ def infer_video_clip_model(
     min_faces = max(4, clip_frames // 2)
     if face_cropper is not None and hasattr(face_cropper, "config"):
         min_faces = max(min_faces, int(getattr(face_cropper.config, "min_sample_faces", 4)))
-    if len(face_samples) < min_faces:
+    unique_frames_with_face = len({sample["frame_index"] for sample in face_samples})
+    if not face_samples or unique_frames_with_face < min_faces:
         breakdown = empty_clip_score_breakdown(
             method=method,
             threshold=threshold,
             frames_sampled=len(samples),
-            frames_without_face=len(samples) - len(face_samples),
+            frames_without_face=len(samples) - unique_frames_with_face,
             clip_frames=clip_frames,
             clip_size=clip_size,
             max_clips=max_clips,
         )
         if face_cropper is not None and hasattr(face_cropper, "to_metadata"):
             breakdown.update(face_cropper.to_metadata())
+        breakdown["multi_face"] = multi_face
         return {
             "file": video_path.name,
             "status": no_face_status,
@@ -240,36 +338,70 @@ def infer_video_clip_model(
             "score_breakdown": breakdown,
         }
 
-    windows = pick_clip_windows(face_samples, clip_frames=clip_frames, max_clips=max_clips)
+    slots = _group_face_samples_by_slot(face_samples)
     per_clip: list[dict] = []
-    for clip_index, window in enumerate(windows):
-        crops = [entry["crop"] for entry in window]
-        frame_indices = [entry["frame_index"] for entry in window]
-        clip = clip_to_tensor(crops, device)
-        logits = model.forward_logits(clip).detach().cpu().numpy().reshape(-1)
-        features = model.forward_features(clip).detach().cpu().numpy().reshape(-1)
-        row = classification_row_from_logits(float(logits[0]), float(logits[1]), threshold=threshold)
-        row.update(
-            {
-                "clip_index": clip_index,
-                "frame_indices": frame_indices,
-                "clip_start_frame": frame_indices[0],
-                "clip_end_frame": frame_indices[-1],
-                "representation": representation_summary(features, export_vector=export_embedding),
-            }
+    clip_counter = 0
+    for face_index, slot_samples in sorted(slots.items()):
+        if len(slot_samples) < clip_frames:
+            continue
+        windows = pick_clip_windows(slot_samples, clip_frames=clip_frames, max_clips=max_clips)
+        for window in windows:
+            crops = [entry["crop"] for entry in window]
+            frame_indices = [entry["frame_index"] for entry in window]
+            clip = clip_to_tensor(crops, device)
+            logits = model.forward_logits(clip).detach().cpu().numpy().reshape(-1)
+            features = model.forward_features(clip).detach().cpu().numpy().reshape(-1)
+            row = classification_row_from_logits(float(logits[0]), float(logits[1]), threshold=threshold)
+            row.update(
+                {
+                    "clip_index": clip_counter,
+                    "face_index": face_index,
+                    "frame_indices": frame_indices,
+                    "clip_start_frame": frame_indices[0],
+                    "clip_end_frame": frame_indices[-1],
+                    "representation": representation_summary(features, export_vector=export_embedding),
+                }
+            )
+            per_clip.append(row)
+            clip_counter += 1
+
+    if not per_clip:
+        breakdown = empty_clip_score_breakdown(
+            method=method,
+            threshold=threshold,
+            frames_sampled=len(samples),
+            frames_without_face=len(samples) - unique_frames_with_face,
+            clip_frames=clip_frames,
+            clip_size=clip_size,
+            max_clips=max_clips,
         )
-        per_clip.append(row)
+        if face_cropper is not None and hasattr(face_cropper, "to_metadata"):
+            breakdown.update(face_cropper.to_metadata())
+        breakdown["multi_face"] = multi_face
+        return {
+            "file": video_path.name,
+            "status": no_face_status,
+            "fake_score": None,
+            "pred_label": None,
+            "frames_used": len(face_samples),
+            "score_breakdown": breakdown,
+        }
 
     breakdown = build_clip_score_breakdown(
         per_clip,
         method=method,
         threshold=threshold,
         frames_sampled=len(samples),
-        frames_without_face=len(samples) - len(face_samples),
+        frames_without_face=len(samples) - unique_frames_with_face,
         clip_frames=clip_frames,
         clip_size=clip_size,
         max_clips=max_clips,
+        aggregate=aggregate,
+        face_samples=face_samples,
+        multi_face=multi_face,
     )
+    if face_cropper is not None and hasattr(face_cropper, "to_metadata"):
+        breakdown.update(face_cropper.to_metadata())
     return {
         "file": video_path.name,
         "status": "ok",

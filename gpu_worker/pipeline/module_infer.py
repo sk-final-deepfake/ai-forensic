@@ -165,6 +165,7 @@ def run_xception_module(video_path: Path, cfg: WorkerConfig, *, threshold: float
 
 def run_timesformer_module(video_path: Path, cfg: WorkerConfig, *, threshold: float, fps: float) -> ModuleRunResult:
     setup_script_paths(cfg)
+    from face_crop import create_face_cropper  # type: ignore
     from video_clip_transformer_common import infer_video_clip_model  # type: ignore
     from video_timesformer_infer import (  # type: ignore
         CLIP_FRAMES,
@@ -180,19 +181,24 @@ def run_timesformer_module(video_path: Path, cfg: WorkerConfig, *, threshold: fl
 
     device = torch.device("cuda" if cfg.device.lower().startswith("cuda") and torch.cuda.is_available() else "cpu")
     model = load_model(weights, device)
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-    result = infer_video_clip_model(
-        model,
-        video_path,
-        face_cascade,
-        device,
-        clip_to_tensor=clip_to_tensor,
-        method="timesformer_clip_classification_outputs",
-        clip_frames=CLIP_FRAMES,
-        clip_size=CLIP_SIZE,
-        max_clips=MAX_CLIPS,
-        threshold=threshold,
-    )
+    face_cropper = create_face_cropper(method="yunet", padding=0.3, square=True, human_only=True)
+    try:
+        result = infer_video_clip_model(
+            model,
+            video_path,
+            None,
+            device,
+            clip_to_tensor=clip_to_tensor,
+            method="timesformer_clip_classification_outputs",
+            clip_frames=CLIP_FRAMES,
+            clip_size=CLIP_SIZE,
+            max_clips=MAX_CLIPS,
+            threshold=threshold,
+            face_cropper=face_cropper,
+            aggregate="max",
+        )
+    finally:
+        face_cropper.close()
     if result.get("status") != "ok" or result.get("fake_score") is None:
         raise RuntimeError(f"TimeSformer inference failed: status={result.get('status')}")
 

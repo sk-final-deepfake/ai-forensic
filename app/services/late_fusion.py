@@ -356,6 +356,76 @@ def build_analysis_reasons(
     return reasons
 
 
+def build_fused_per_frame_scores(
+    *,
+    cnn_scores: list[dict[str, Any]],
+    temporal_scores: list[dict[str, Any]],
+    optical_score: float,
+    fuse_fn,
+    temporal_video_score: float | None = None,
+) -> list[dict[str, Any]]:
+    """Fuse CNN + temporal per (frame, face); optical is shared video-level input."""
+    temporal_map: dict[tuple[int, int], float] = {}
+    for row in temporal_scores:
+        frame_index = row.get("frame_index", row.get("frameIndex"))
+        score = row.get("fake_score", row.get("prob_fake", row.get("riskScore")))
+        if frame_index is None or score is None:
+            continue
+        key = (int(frame_index), int(row.get("face_index", 0)))
+        temporal_map[key] = max(temporal_map.get(key, 0.0), float(score))
+
+    temporal_fallback = float(temporal_video_score or 0.0)
+    fused: list[dict[str, Any]] = []
+    for row in cnn_scores:
+        frame_index = row.get("frame_index", row.get("frameIndex"))
+        score = row.get("fake_score", row.get("prob_fake", row.get("riskScore")))
+        if frame_index is None or score is None:
+            continue
+        face_index = int(row.get("face_index", 0))
+        cnn_score = float(score)
+        temporal_score = temporal_map.get((int(frame_index), face_index))
+        if temporal_score is None:
+            frame_scores = [value for (frame, _), value in temporal_map.items() if frame == int(frame_index)]
+            temporal_score = max(frame_scores) if frame_scores else temporal_fallback
+
+        fused_score = float(
+            fuse_fn(
+                cnn_score=cnn_score,
+                temporal_score=temporal_score,
+                optical_score=float(optical_score),
+            )
+        )
+        entry = {
+            "frame_index": int(frame_index),
+            "face_index": face_index,
+            "fake_score": round(fused_score, 6),
+        }
+        bbox = row.get("bbox")
+        if bbox is not None:
+            entry["bbox"] = bbox
+        fused.append(entry)
+    return fused
+
+
+def collapse_frame_risks_by_frame(
+    per_frame_scores: list[dict[str, Any]],
+    video_path: Path,
+) -> list[dict[str, float | int]]:
+    """API frameRisks: one row per frame using the max fused score across faces."""
+    by_frame: dict[int, float] = {}
+    for row in per_frame_scores:
+        frame_index = row.get("frame_index", row.get("frameIndex"))
+        score = row.get("fake_score", row.get("prob_fake", row.get("riskScore")))
+        if frame_index is None or score is None:
+            continue
+        frame_index = int(frame_index)
+        by_frame[frame_index] = max(by_frame.get(frame_index, 0.0), float(score))
+    return build_frame_risks(
+        video_path,
+        [{"frame_index": frame_index, "fake_score": score} for frame_index, score in sorted(by_frame.items())],
+    )
+
+
 def frame_index_to_timestamp(video_path: Path, frame_index: int) -> float:
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():

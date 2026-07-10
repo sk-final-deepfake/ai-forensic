@@ -24,6 +24,10 @@ cd "$ROOT"
 source "$ROOT/.venv/bin/activate"
 unset AWS_PROFILE
 
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/s3_deepfake_paths.sh
+source "${_SCRIPT_DIR}/../common/s3_deepfake_paths.sh"
+
 VARIANT="${VARIANT:-small}"
 DATASET_DIR="${DATASET_DIR:-data/test/video/celeb-df-v2}"
 THRESHOLD="${THRESHOLD:-0.5}"
@@ -31,7 +35,7 @@ UPLOAD_VIDEOS="${UPLOAD_VIDEOS:-1}"
 SKIP_FINETUNE="${SKIP_FINETUNE:-0}"
 SKIP_INFER="${SKIP_INFER:-0}"
 WEIGHTS="${WEIGHTS:-models/test/video/convnext/v1.0.0/convnext_finetuned.pth}"
-S3_REPORT_PREFIX="${S3_REPORT_PREFIX:-cases/test/video-convnext-celebdf-benchmark/reports}"
+S3_REPORT_PREFIX="${S3_REPORT_PREFIX:-$(s3_legacy_reports video-convnext-celebdf-benchmark)}"
 RUN_ID="${RUN_ID:-convnext-celebdf-benchmark-$(date -u +%Y%m%d-%H%M)}"
 
 FAKE_DIR="$ROOT/$DATASET_DIR/fake"

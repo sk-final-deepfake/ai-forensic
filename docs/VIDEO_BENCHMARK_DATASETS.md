@@ -230,9 +230,11 @@ Fake / Real: DFDC 또는 HF DFD subset
 
 | 종류 | S3 prefix 예시 |
 |------|----------------|
-| Xception 리포트 | `cases/test/video-xception-benchmark/reports/<RUN_ID>/` |
-| Celeb-DF 리포트 (모델별) | `cases/test/video-{model}-celebdf-benchmark/reports/<RUN_ID>/` |
-| Optical flow | `cases/test/video-optical-flow-benchmark/reports/<RUN_ID>/` |
+| Xception 리포트 | `deepfake/archive/legacy-benchmarks/video-xception-benchmark/reports/<RUN_ID>/` |
+| Celeb-DF 리포트 (모델별) | `deepfake/archive/legacy-benchmarks/video-{model}-celebdf-benchmark/reports/<RUN_ID>/` |
+| Optical flow | `deepfake/archive/legacy-benchmarks/video-optical-flow-benchmark/reports/<RUN_ID>/` |
+| 벤치 입력 mp4 | `deepfake/datasets/bench/{celebdf\|ffpp_vox}/{fake,real}/` |
+| 모델별 infer bundle | `deepfake/results/infer/{model}/{profile}/` |
 | 업로드 mp4 | `.../datasets/fake/`, `.../datasets/real/` |
 | manifest | `.../datasets/fake/manifest.json`, `.../real/manifest.json` |
 

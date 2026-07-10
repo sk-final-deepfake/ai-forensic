@@ -8,14 +8,18 @@
 # Optional env:
 #   FORENSHIELD_AI_ROOT=~/forenShield-ai
 #   S3_EVIDENCE_BUCKET=forenshield-evidence-877044078824
-#   S3_REPORT_PREFIX=cases/test/video-xception-benchmark/reports
+#   S3_REPORT_PREFIX=deepfake/archive/legacy-benchmarks/video-xception-benchmark/reports
 #   UPLOAD_VIDEOS=1          # default 1; set 0 to skip mp4 upload
 set -eu
+
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/s3_deepfake_paths.sh
+source "${_SCRIPT_DIR}/../common/s3_deepfake_paths.sh"
 
 RUN_ID="${1:?usage: $0 <run_id>}"
 ROOT="${FORENSHIELD_AI_ROOT:-$HOME/forenShield-ai}"
 BUCKET="${S3_EVIDENCE_BUCKET:-forenshield-evidence-877044078824}"
-PREFIX="${S3_REPORT_PREFIX:-cases/test/video-xception-benchmark/reports}"
+PREFIX="${S3_REPORT_PREFIX:-$(s3_legacy_reports video-xception-benchmark)}"
 UPLOAD_VIDEOS="${UPLOAD_VIDEOS:-1}"
 LOCAL_JSON="${ROOT}/results/infer/${RUN_ID}/json"
 LOCAL_PRED="${ROOT}/results/infer/${RUN_ID}/predictions.json"

@@ -1309,6 +1309,6 @@
   "model": "video-swin/v1.0.0",
   "profile": "celebdf",
   "model_slug": "video-swin",
-  "s3_dataset_prefix": "cases/test/video-benchmark-datasets/celebdf",
-  "s3_output_prefix": "cases/test/video-benchmark-datasets/video-swin/celebdf"
+  "s3_dataset_prefix": "deepfake/datasets/bench/celebdf",
+  "s3_output_prefix": "deepfake/results/infer/video-swin/celebdf"
 }

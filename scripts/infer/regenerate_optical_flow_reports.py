@@ -20,6 +20,7 @@ from scripts.infer.optical_flow_common import (  # noqa: E402
     generate_benchmark_html,
     save_report_json,
 )
+from scripts.common import s3_deepfake_paths as s3p
 
 S3_BUCKET = "s3://forenshield-evidence-877044078824"
 
@@ -108,7 +109,7 @@ def _collect_report_json_paths(run_dir: Path, model: str | None = None) -> list[
             continue
         paths.append(path)
 
-    # S3 layout: cases/test/video-benchmark-datasets/raft/ffpp_vox/{fake,real}/*.json
+    # S3 layout: deepfake/results/infer/raft/{profile}/{fake,real}/*.json
     for sub in ("fake", "real"):
         label_dir = run_dir / sub
         if label_dir.is_dir():
@@ -181,22 +182,23 @@ def _load_reports(run_dir: Path, model: str | None = None) -> list[dict]:
 
 
 def _s3_prefixes_for_run(run_id: str) -> list[str]:
+    legacy_optical = s3p.legacy_reports("video-optical-flow-benchmark")
+    raft_ffpp = s3p.infer_model("raft", "ffpp_vox")
     prefixes = [
-        f"{S3_BUCKET}/cases/test/video-optical-flow-benchmark/reports/{run_id}/",
-        f"{S3_BUCKET}/cases/test/video-optical-flow-benchmark/reports/{run_id}",
+        f"{S3_BUCKET}/{legacy_optical}/{run_id}/",
+        f"{S3_BUCKET}/{legacy_optical}/{run_id}",
+        f"{S3_BUCKET}/{raft_ffpp}/",
+        f"{S3_BUCKET}/{raft_ffpp}/{run_id}/",
     ]
     lowered = run_id.lower()
-    if "raft" in lowered and "ffpp" in lowered:
+    if "raft" in lowered and "celeb" in lowered:
+        raft_celeb = s3p.infer_model("raft", "celebdf")
         prefixes.extend(
             [
-                f"{S3_BUCKET}/cases/test/video-benchmark-datasets/RAFT/ffpp_vox/",
-                f"{S3_BUCKET}/cases/test/video-benchmark-datasets/raft/ffpp_vox/",
-                f"{S3_BUCKET}/cases/test/video-benchmark-datasets/RAFT/ffpp_vox/{run_id}/",
-                f"{S3_BUCKET}/cases/test/video-benchmark-datasets/raft/ffpp_vox/{run_id}/",
+                f"{S3_BUCKET}/{raft_celeb}/",
+                f"{S3_BUCKET}/{raft_celeb}/{run_id}/",
             ]
         )
-    if "raft" in lowered and "celeb" in lowered:
-        prefixes.append(f"{S3_BUCKET}/cases/test/video-optical-flow-benchmark/reports/{run_id}/")
     return prefixes
 
 

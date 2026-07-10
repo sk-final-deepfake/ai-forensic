@@ -45,7 +45,7 @@ print('pair range', d.get('score_breakdown',{}).get('flow_mag_pair_range'))
 "
 
 # S3 업로드
-export S3_PREFIX=s3://forenshield-evidence-877044078824/cases/test/video-benchmark-datasets/gmflow/ffpp_vox/$S3_RUN_ID
+export S3_PREFIX=s3://forenshield-evidence-877044078824/deepfake/results/infer/gmflow/ffpp_vox/$S3_RUN_ID
 aws s3 sync results/infer/$RUN_ID/gmflow/json/ $S3_PREFIX/json/
 aws s3 cp results/infer/$RUN_ID/datasets/infer_summary.json $S3_PREFIX/infer_summary.json
 aws s3 cp results/eval/$RUN_ID/metrics.json $S3_PREFIX/metrics.json
@@ -306,7 +306,7 @@ PY
 ### 5-2. S3 재업로드
 
 ```bash
-export S3_PREFIX=s3://forenshield-evidence-877044078824/cases/test/video-benchmark-datasets/gmflow/celebdf/$S3_RUN_ID
+export S3_PREFIX=s3://forenshield-evidence-877044078824/deepfake/results/infer/gmflow/celebdf/$S3_RUN_ID
 
 aws s3 cp results/infer/$LOCAL_RUN_ID/infer_summary.json $S3_PREFIX/infer_summary.json
 ```

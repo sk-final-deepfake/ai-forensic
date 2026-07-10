@@ -14,6 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from optical_flow_backends import GmflowBackend, PwcnetBackend, RaftBackend
 from optical_flow_common import aggregate_pair_stats, sample_frame_pairs
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+import s3_deepfake_paths as s3p
+
 
 BACKENDS = {
     "raft": RaftBackend,
@@ -234,7 +237,7 @@ def main() -> None:
     print("metrics:", eval_dir / "metrics.json")
     print()
     print("S3 upload:")
-    print("  S3_REPORT_PREFIX=cases/test/video-optical-flow-benchmark/reports \\")
+    print(f"  S3_REPORT_PREFIX={s3p.LEGACY_OPTICAL_FLOW} \\")
     print(f"    UPLOAD_VIDEOS=1 bash scripts/upload/s3_upload_optical_flow_results.sh {run_id}")
 
 

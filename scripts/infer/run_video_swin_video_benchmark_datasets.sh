@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Video Swin on S3 video-benchmark-datasets (celebdf + ffpp_vox, 50+50 each = 200)
-# -> bundle under cases/test/video-benchmark-datasets/video-swin/{profile}/
+# Video Swin on S3 bench datasets (celebdf + ffpp_vox, 50+50 each = 200)
+# -> bundle under deepfake/results/infer/video-swin/{profile}/
 #
 # S3 input:
-#   s3://forenshield-evidence-877044078824/cases/test/video-benchmark-datasets/celebdf/{fake,real}/
-#   s3://forenshield-evidence-877044078824/cases/test/video-benchmark-datasets/ffpp_vox/{fake,real}/
+#   s3://.../deepfake/datasets/bench/celebdf/{fake,real}/
+#   s3://.../deepfake/datasets/bench/ffpp_vox/{fake,real}/
 #
 # S3 output:
-#   .../video-benchmark-datasets/video-swin/celebdf/{infer_summary.json,metrics.json,fake/,real/}
-#   .../video-benchmark-datasets/video-swin/ffpp_vox/...
+#   .../deepfake/results/infer/video-swin/celebdf/{infer_summary.json,metrics.json,fake/,real/}
+#   .../deepfake/results/infer/video-swin/ffpp_vox/...
 #
 # Usage (GPU):
 #   cd ~/forenShield-ai && source .venv/bin/activate && unset AWS_PROFILE
@@ -28,12 +28,16 @@ cd "$ROOT"
 source "$ROOT/.venv/bin/activate"
 unset AWS_PROFILE
 
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/s3_deepfake_paths.sh
+source "${_SCRIPT_DIR}/../common/s3_deepfake_paths.sh"
+
 BUCKET="${S3_EVIDENCE_BUCKET:-forenshield-evidence-877044078824}"
-S3_DATA_BASE="s3://${BUCKET}/cases/test/video-benchmark-datasets"
-S3_MODEL_BASE="${S3_DATA_BASE}/video-swin"
+MODEL_SLUG="video-swin"
+S3_DATA_BASE="s3://${BUCKET}/${S3_DEEPFAKE_DATASETS_BENCH}"
+S3_MODEL_BASE="s3://${BUCKET}/${S3_DEEPFAKE_RESULTS_INFER}/${MODEL_SLUG}"
 DATA_ROOT="${DATA_ROOT:-data/benchmark/video-benchmark-datasets}"
 OUT_DIR="${OUT_DIR:-results/video-swin-benchmark-bundle}"
-MODEL_SLUG="video-swin"
 WEIGHTS="${WEIGHTS:-models/test/video/video-swin/v1.0.0/video_swin_finetuned.pth}"
 THRESHOLD="${THRESHOLD:-0.5}"
 MAX_CLIPS="${MAX_CLIPS:-4}"
@@ -75,7 +79,7 @@ run_profile() {
     --profile "$profile" \
     --model-slug "$MODEL_SLUG" \
     --out-dir "$OUT_DIR" \
-    --s3-dataset-prefix "cases/test/video-benchmark-datasets/${profile}"
+    --s3-dataset-prefix "$(s3_bench_profile "${profile}")"
 }
 
 upload_profile() {

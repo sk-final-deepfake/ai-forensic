@@ -7,10 +7,14 @@
 #   OUT_DIR=results/raft-benchmark-bundle bash scripts/upload/s3_upload_raft_benchmark_bundle.sh
 set -eu
 
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/s3_deepfake_paths.sh
+source "${_SCRIPT_DIR}/../common/s3_deepfake_paths.sh"
+
 ROOT="${FORENSHIELD_AI_ROOT:-$HOME/forenShield-ai}"
 OUT_DIR="${OUT_DIR:-results/raft-benchmark-bundle}"
 BUCKET="${S3_EVIDENCE_BUCKET:-forenshield-evidence-877044078824}"
-S3_RAFT_BASE="s3://${BUCKET}/cases/test/video-benchmark-datasets/raft"
+S3_RAFT_BASE="s3://${BUCKET}/${S3_DEEPFAKE_RESULTS_INFER}/raft"
 
 upload_profile() {
   local profile="$1"

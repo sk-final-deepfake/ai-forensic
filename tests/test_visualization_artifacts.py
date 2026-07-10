@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -31,6 +33,55 @@ class VisualizationArtifactUnitTests(unittest.TestCase):
 
     def test_timestamp_label(self) -> None:
         self.assertEqual(viz._timestamp_label(65.0), "01:05")
+
+    def test_finalize_overlay_video_prefers_h264_when_ffmpeg_available(self) -> None:
+        if not viz._ffmpeg_path():
+            self.skipTest("ffmpeg not installed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_path = tmp_path / "overlay_raw.mp4"
+            out_path = tmp_path / "overlay.mp4"
+            frame = np.zeros((64, 64, 3), dtype=np.uint8)
+            writer = cv2.VideoWriter(
+                str(raw_path),
+                cv2.VideoWriter_fourcc(*"mp4v"),
+                10.0,
+                (64, 64),
+            )
+            for _ in range(5):
+                writer.write(frame)
+            writer.release()
+
+            result = viz._finalize_overlay_video(raw_path, out_path)
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertTrue(result.is_file())
+            self.assertFalse(raw_path.exists())
+
+            ffprobe = shutil.which("ffprobe")
+            if not ffprobe:
+                self.skipTest("ffprobe not installed")
+
+            probe = subprocess.run(
+                [
+                    ffprobe,
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=codec_name",
+                    "-of",
+                    "default=nokey=1:noprint_wrappers=1",
+                    str(result),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(probe.stdout.strip(), "h264")
 
 
 class VisualizationArtifactIntegrationTests(unittest.TestCase):

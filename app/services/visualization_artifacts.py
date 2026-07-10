@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import logging
 import os
+import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from app.core.paths import ensure_infer_scripts_on_path
 from app.services.s3_artifact_upload import (
@@ -112,6 +117,67 @@ def _pick_representative_rows(per_frame_scores: list[dict[str, Any]], limit: int
     ]
     rows.sort(key=lambda row: float(row.get("fake_score", row.get("prob_fake"))), reverse=True)
     return rows[:limit]
+
+
+def _ffmpeg_path() -> str | None:
+    return os.getenv("FFMPEG_PATH") or shutil.which("ffmpeg")
+
+
+def _transcode_overlay_to_h264(source: Path, dest: Path) -> bool:
+    """Re-encode OpenCV mp4v output to browser-playable H.264 (yuv420p)."""
+    ffmpeg = _ffmpeg_path()
+    if not ffmpeg or not source.is_file():
+        return False
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(source),
+        "-c:v",
+        "libx264",
+        "-preset",
+        os.getenv("AI_VISUALIZATION_OVERLAY_PRESET", "veryfast"),
+        "-crf",
+        os.getenv("AI_VISUALIZATION_OVERLAY_CRF", "23"),
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-an",
+        str(dest),
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        logger.warning("Overlay H.264 transcode failed: %s", exc)
+        return False
+
+    return dest.is_file() and dest.stat().st_size > 0
+
+
+def _finalize_overlay_video(raw_path: Path, output_path: Path) -> Path | None:
+    if not raw_path.is_file() or raw_path.stat().st_size == 0:
+        return None
+
+    if _transcode_overlay_to_h264(raw_path, output_path):
+        try:
+            raw_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return output_path
+
+    logger.warning("ffmpeg unavailable or transcode failed; overlay may not play in browsers: %s", raw_path)
+    if output_path != raw_path:
+        try:
+            shutil.move(str(raw_path), str(output_path))
+        except OSError:
+            return raw_path
+    return output_path
 
 
 def _maybe_upload(local_path: Path, *, evidence_id: int, analysis_request_id: int, name: str) -> str | None:
@@ -232,9 +298,10 @@ def _build_overlay_video(
         return None
 
     max_frames = int(_overlay_max_seconds() * fps)
+    raw_overlay_path = work_dir / "overlay_raw.mp4"
     overlay_path = work_dir / "overlay.mp4"
     writer = cv2.VideoWriter(
-        str(overlay_path),
+        str(raw_overlay_path),
         cv2.VideoWriter_fourcc(*"mp4v"),
         fps,
         (width, height),
@@ -260,11 +327,15 @@ def _build_overlay_video(
         writer.release()
         cap.release()
 
-    if frame_index == 0 or not overlay_path.is_file():
+    if frame_index == 0 or not raw_overlay_path.is_file():
+        return None
+
+    playable_overlay = _finalize_overlay_video(raw_overlay_path, overlay_path)
+    if playable_overlay is None:
         return None
 
     return _maybe_upload(
-        overlay_path,
+        playable_overlay,
         evidence_id=evidence_id,
         analysis_request_id=analysis_request_id,
         name=overlay_path.name,

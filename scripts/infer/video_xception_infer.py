@@ -239,12 +239,22 @@ def classification_row_from_logits(logit_real: float, logit_fake: float, *, thre
     }
 
 
-def logits_to_frame_rows(logits: np.ndarray, frame_indices: list[int], *, threshold: float) -> list[dict]:
+def logits_to_frame_rows(
+    logits: np.ndarray,
+    face_samples: list[dict],
+    *,
+    threshold: float,
+) -> list[dict]:
     rows: list[dict] = []
-    for idx, (logit_real, logit_fake) in zip(frame_indices, logits):
+    for meta, (logit_real, logit_fake) in zip(face_samples, logits):
         row = classification_row_from_logits(float(logit_real), float(logit_fake), threshold=threshold)
-        row["frame_index"] = int(idx)
+        row["frame_index"] = int(meta["frame_index"])
+        row["face_index"] = int(meta.get("face_index", 0))
         row["face_detected"] = True
+        bbox = meta.get("bbox")
+        if bbox is not None:
+            x, y, w, h = bbox
+            row["bbox"] = {"x": int(x), "y": int(y), "w": int(w), "h": int(h)}
         rows.append(row)
     return rows
 
@@ -319,7 +329,7 @@ def empty_score_breakdown(*, threshold: float, frames_sampled: int, frames_witho
 
 
 def build_score_breakdown(
-    frame_indices: list[int],
+    face_samples: list[dict],
     logits: np.ndarray,
     *,
     threshold: float = 0.5,
@@ -328,7 +338,7 @@ def build_score_breakdown(
     aggregate: str = "mean",
     top_k: int = 5,
 ) -> dict:
-    per_frame = logits_to_frame_rows(logits, frame_indices, threshold=threshold)
+    per_frame = logits_to_frame_rows(logits, face_samples, threshold=threshold)
     prob_fake_values = np.array([row["prob_fake"] for row in per_frame], dtype=np.float64)
     margin_values = np.array([row["margin"] for row in per_frame], dtype=np.float64)
     entropy_values = np.array([row["entropy"] for row in per_frame], dtype=np.float64)
@@ -349,11 +359,17 @@ def build_score_breakdown(
     aggregate_row["pred_label"] = "fake" if fake_score >= threshold else "real"
 
     per_frame_scores = [
-        {"frame_index": row["frame_index"], "fake_score": row["prob_fake"]}
+        {
+            "frame_index": row["frame_index"],
+            "face_index": row.get("face_index", 0),
+            "fake_score": row["prob_fake"],
+            **({"bbox": row["bbox"]} if row.get("bbox") else {}),
+        }
         for row in per_frame
     ]
 
-    method_label = f"{aggregate}_prob_fake_over_face_frames"
+    unique_frames_with_face = len({row["frame_index"] for row in per_frame})
+    method_label = f"{aggregate}_prob_fake_over_face_crops"
     if aggregate == "topk":
         method_label = f"top{top_k}_mean_prob_fake_over_face_frames"
 
@@ -367,7 +383,9 @@ def build_score_breakdown(
         "entropy_log_base": "natural",
         "frames_sampled": frames_sampled,
         "frames_with_face": len(per_frame),
+        "unique_frames_with_face": unique_frames_with_face,
         "frames_without_face": frames_without_face,
+        "multi_face": True,
         "aggregate": aggregate_row,
         "aggregate_fake_score": fake_score,
         "score_stats": {
@@ -402,9 +420,24 @@ def infer_video(
     samples = read_frame_samples(video_path, num_frames=num_frames)
     face_samples: list[dict] = []
     for sample in samples:
-        crop = face_cropper.crop(sample["frame"])
-        if crop is not None:
-            face_samples.append({"frame_index": sample["frame_index"], "crop": crop})
+        if hasattr(face_cropper, "crop_all"):
+            face_entries = face_cropper.crop_all(sample["frame"])
+        else:
+            crop = face_cropper.crop(sample["frame"])
+            face_entries = (
+                [{"face_index": 0, "bbox": None, "crop": crop}]
+                if crop is not None
+                else []
+            )
+        for entry in face_entries:
+            face_samples.append(
+                {
+                    "frame_index": sample["frame_index"],
+                    "face_index": int(entry.get("face_index", 0)),
+                    "bbox": entry.get("bbox"),
+                    "crop": entry["crop"],
+                }
+            )
 
     if not face_samples:
         breakdown = empty_score_breakdown(
@@ -423,14 +456,16 @@ def infer_video(
         }
 
     min_faces = max(1, int(getattr(face_cropper.config, "min_sample_faces", 1)))
-    if len(face_samples) < min_faces:
+    unique_frames_with_face = len({sample["frame_index"] for sample in face_samples})
+    if unique_frames_with_face < min_faces:
         breakdown = empty_score_breakdown(
             threshold=threshold,
             frames_sampled=len(samples),
-            frames_without_face=len(samples) - len(face_samples),
+            frames_without_face=len(samples) - unique_frames_with_face,
         )
         breakdown.update(face_cropper.to_metadata())
         breakdown["frames_with_face"] = len(face_samples)
+        breakdown["unique_frames_with_face"] = unique_frames_with_face
         return {
             "file": video_path.name,
             "status": face_cropper.no_face_status(),
@@ -441,15 +476,14 @@ def infer_video(
         }
 
     crops = [s["crop"] for s in face_samples]
-    frame_indices = [s["frame_index"] for s in face_samples]
     batch = frames_to_tensor(crops, device)
     logits = model.forward_logits(batch).detach().cpu().numpy()
     breakdown = build_score_breakdown(
-        frame_indices,
+        face_samples,
         logits,
         threshold=threshold,
         frames_sampled=len(samples),
-        frames_without_face=len(samples) - len(face_samples),
+        frames_without_face=len(samples) - unique_frames_with_face,
         aggregate=aggregate,
         top_k=top_k,
     )

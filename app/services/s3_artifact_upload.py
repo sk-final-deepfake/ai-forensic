@@ -20,7 +20,7 @@ def artifact_bucket() -> str:
 def artifact_prefix(evidence_id: int, analysis_request_id: int) -> str:
     template = os.getenv(
         "AI_VISUALIZATION_PREFIX",
-        "cases/analysis-artifacts/{evidence_id}/{analysis_request_id}",
+        "deepfake/artifacts/analysis/{evidence_id}/{analysis_request_id}",
     )
     return template.format(
         evidence_id=evidence_id,

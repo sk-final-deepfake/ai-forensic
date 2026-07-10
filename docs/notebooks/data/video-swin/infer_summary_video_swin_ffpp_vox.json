@@ -1309,6 +1309,6 @@
   "model": "video-swin/v1.0.0",
   "profile": "ffpp_vox",
   "model_slug": "video-swin",
-  "s3_dataset_prefix": "cases/test/video-benchmark-datasets/ffpp_vox",
-  "s3_output_prefix": "cases/test/video-benchmark-datasets/video-swin/ffpp_vox"
+  "s3_dataset_prefix": "deepfake/datasets/bench/ffpp_vox",
+  "s3_output_prefix": "deepfake/results/infer/video-swin/ffpp_vox"
 }

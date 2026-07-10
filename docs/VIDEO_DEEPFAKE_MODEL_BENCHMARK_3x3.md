@@ -104,13 +104,13 @@ Fine-tune: FF++fake 100 + Vox/FF++ real 100 (Celeb-DF 테스트셋 제외)
 
 | 분류       | 모델              | RUN_ID (대표)                                  | 테스트셋           | S3 prefix                                                 | 상태                          |
 | -------- | --------------- | -------------------------------------------- | -------------- | --------------------------------------------------------- | --------------------------- |
-| CNN      | Xception        | `xception-benchmark-20260618-0411`           | FF++50 + Vox50 | `cases/test/video-xception-benchmark/reports/`            | ✅ 완료                        |
-| CNN      | EfficientNet-B4 | —                                            | —              | `cases/test/video-efficientnetb4-benchmark/reports/`      | ⏸ 스크립트만 (미실행)               |
-| CNN      | ConvNeXt-Small  | `convnext-celebdf-benchmark-`*               | Celeb-DF 50+50 | `cases/test/video-convnext-celebdf-benchmark/reports/`    | 🔄 fine-tune 진행/재시작         |
-| Temporal | VideoMAE        | `videomae-celebdf200-eval-20260619-0218`     | Celeb-DF 50+50 | `cases/test/video-videomae-celebdf-benchmark/reports/`    | ✅ 완료                        |
-| Temporal | TimeSformer     | `optical-flow-celebdf-20260619-0504` ⚠️      | Celeb-DF 50+50 | `cases/test/video-timesformer-celebdf-benchmark/reports/` | ✅ 완료 (RUN_ID 오염 — 재실행 권장)   |
-| Temporal | Video Swin      | `video-swin-celebdf-benchmark-20260619-0606` | Celeb-DF 50+50 | `cases/test/video-swin-celebdf-benchmark/reports/`        | ✅ 완료                        |
-| Optical  | RAFT            | `optical-flow-celebdf-20260619-0504`         | Celeb-DF 50+50 | `cases/test/video-optical-flow-benchmark/reports/`        | ✅ 100/100                   |
+| CNN      | Xception        | `xception-benchmark-20260618-0411`           | FF++50 + Vox50 | `deepfake/archive/legacy-benchmarks/video-xception-benchmark/reports/`            | ✅ 완료                        |
+| CNN      | EfficientNet-B4 | —                                            | —              | `deepfake/archive/legacy-benchmarks/video-efficientnetb4-benchmark/reports/`      | ⏸ 스크립트만 (미실행)               |
+| CNN      | ConvNeXt-Small  | `convnext-celebdf-benchmark-`*               | Celeb-DF 50+50 | `deepfake/archive/legacy-benchmarks/video-convnext-celebdf-benchmark/reports/`    | 🔄 fine-tune 진행/재시작         |
+| Temporal | VideoMAE        | `videomae-celebdf200-eval-20260619-0218`     | Celeb-DF 50+50 | `deepfake/archive/legacy-benchmarks/video-videomae-celebdf-benchmark/reports/`    | ✅ 완료                        |
+| Temporal | TimeSformer     | `optical-flow-celebdf-20260619-0504` ⚠️      | Celeb-DF 50+50 | `deepfake/archive/legacy-benchmarks/video-timesformer-celebdf-benchmark/reports/` | ✅ 완료 (RUN_ID 오염 — 재실행 권장)   |
+| Temporal | Video Swin      | `video-swin-celebdf-benchmark-20260619-0606` | Celeb-DF 50+50 | `deepfake/archive/legacy-benchmarks/video-swin-celebdf-benchmark/reports/`        | ✅ 완료                        |
+| Optical  | RAFT            | `optical-flow-celebdf-20260619-0504`         | Celeb-DF 50+50 | `deepfake/archive/legacy-benchmarks/video-optical-flow-benchmark/reports/`        | ✅ 100/100                   |
 | Optical  | GMFlow          | (동일 RUN_ID)                                  | Celeb-DF 50+50 | (동일)                                                      | ✅ 83/100                    |
 | Optical  | PWC-Net         | —                                            | —              | —                                                         | ❌ correlation 빌드 실패, 백엔드 제거 |
 
@@ -163,7 +163,7 @@ python3 scripts/infer/video_xception_benchmark_infer.py --root . \
   --fake-dir data/test/video/ffpp/fake_over60s \
   --real-dir data/test/video/voxceleb/real
 python3 scripts/infer/bundle_xception_benchmark_report.py <RUN_ID> --root . --profile ffpp_vox
-S3_REPORT_PREFIX=cases/test/video-xception-benchmark/reports \
+# S3_REPORT_PREFIX는 생략 가능 (기본값: deepfake/archive/legacy-benchmarks/video-xception-benchmark/reports)
   bash scripts/upload/s3_upload_video_infer_results.sh <RUN_ID>
 
 # EfficientNet-B4 — Celeb-DF (기본값)

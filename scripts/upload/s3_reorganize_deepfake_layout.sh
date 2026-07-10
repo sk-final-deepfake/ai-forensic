@@ -87,7 +87,7 @@ run_evidence() {
     "${EVIDENCE_BUCKET}" "deepfake/datasets/field/youtube-shorts" "field"
 
   # Infer results from unified benchmark tree (model slugs)
-  local models=(xception timesformer videomae video-swin convnext raft gmflow)
+  local models=(xception timesformer videomae video-swin convnext raft gmflow efficientnetb4)
   local model
   for model in "${models[@]}"; do
     sync_pair "${EVIDENCE_BUCKET}" "cases/test/video-benchmark-datasets/${model}" \

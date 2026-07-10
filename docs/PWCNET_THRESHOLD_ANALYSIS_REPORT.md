@@ -34,8 +34,8 @@ PWC-Net은 연속 프레임 쌍에 대해 dense optical flow를 추정하고, fl
 |------|------|
 | 모델 | PWC-Net (`PwcnetBackend`) |
 | 가중치 | `models/test/video/optical-flow/pwcnet/` |
-| 벤치마크 데이터 | S3 `cases/test/video-benchmark-datasets/{celebdf\|ffpp_vox}/` |
-| 결과 S3 | `cases/test/video-benchmark-datasets/PWC-Net/{celebdf\|ffpp_vox}/` |
+| 벤치마크 데이터 | S3 `deepfake/datasets/bench/{celebdf\|ffpp_vox}/` |
+| 결과 S3 | `deepfake/archive/legacy-benchmarks/pwcnet/{celebdf\|ffpp_vox}/` |
 | 리포트 형식 | EfficientNet-B4 스타일 `benchmark_report.json` (`items[]`, `fake_score`, `frame_votes` 등) |
 
 ### 2.2 분석 목적

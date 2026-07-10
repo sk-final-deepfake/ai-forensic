@@ -19,11 +19,15 @@ cd "$ROOT"
 source "$ROOT/.venv/bin/activate"
 unset AWS_PROFILE
 
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/s3_deepfake_paths.sh
+source "${_SCRIPT_DIR}/../common/s3_deepfake_paths.sh"
+
 DATASET_DIR="${DATASET_DIR:-data/test/video/celeb-df-v2}"
 MAX_PAIRS="${MAX_PAIRS:-8}"
 MAX_SIDE="${MAX_SIDE:-512}"
 UPLOAD_VIDEOS="${UPLOAD_VIDEOS:-1}"
-S3_REPORT_PREFIX="${S3_REPORT_PREFIX:-cases/test/video-optical-flow-benchmark/reports}"
+S3_REPORT_PREFIX="${S3_REPORT_PREFIX:-$(s3_legacy_reports video-optical-flow-benchmark)}"
 RUN_ID="${RUN_ID:-optical-flow-celebdf-$(date -u +%Y%m%d-%H%M)}"
 
 FAKE_DIR="$ROOT/$DATASET_DIR/fake"

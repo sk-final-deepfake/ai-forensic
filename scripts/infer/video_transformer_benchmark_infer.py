@@ -26,6 +26,9 @@ from video_timesformer_infer import (
     load_model as load_ts_model,
     clip_to_tensor as ts_clip_to_tensor,
 )
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+import s3_deepfake_paths as s3p
+
 from video_xception_infer import compute_metrics
 
 SPECS = {
@@ -35,7 +38,7 @@ SPECS = {
         "method": "timesformer_clip_classification_outputs",
         "default_weights": "models/test/video/timesformer/v1.0.0/timesformer_finetuned.pth",
         "run_prefix": "timesformer-celebdf-benchmark",
-        "s3_prefix": "cases/test/video-timesformer-celebdf-benchmark/reports",
+        "s3_prefix": s3p.LEGACY_TIMESFORMER_CELEBDF,
     },
     "video-swin": {
         "model_id": SWIN_MODEL_ID,
@@ -43,7 +46,7 @@ SPECS = {
         "method": "video_swin_clip_classification_outputs",
         "default_weights": "models/test/video/video-swin/v1.0.0/video_swin_finetuned.pth",
         "run_prefix": "video-swin-celebdf-benchmark",
-        "s3_prefix": "cases/test/video-swin-celebdf-benchmark/reports",
+        "s3_prefix": s3p.LEGACY_VIDEO_SWIN_CELEBDF,
     },
 }
 

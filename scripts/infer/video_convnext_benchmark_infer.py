@@ -15,6 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from video_convnext_infer import DEFAULT_VARIANT, MODEL_ID, load_model
 from video_xception_infer import compute_metrics, run_directory
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+import s3_deepfake_paths as s3p
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="ConvNeXt benchmark infer (real + fake)")
@@ -117,7 +120,7 @@ def main() -> None:
     print()
     print("bundle + S3:")
     print(f"  python3 scripts/infer/bundle_xception_benchmark_report.py {run_id} --root . --profile celebdf")
-    print(f"  S3_REPORT_PREFIX=cases/test/video-convnext-celebdf-benchmark/reports \\")
+    print(f"  S3_REPORT_PREFIX={s3p.LEGACY_CONVNEXT_CELEBDF} \\")
     print(f"    bash scripts/upload/s3_upload_video_infer_results.sh {run_id}")
 
 

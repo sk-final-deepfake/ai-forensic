@@ -106,7 +106,7 @@ def evidence_pairs() -> list[PrefixPair]:
         PrefixPair(EVIDENCE_BUCKET, "cases/train/video/xception", "deepfake/datasets/train/video/xception", "train"),
         PrefixPair(EVIDENCE_BUCKET, "cases/test/youtube-shorts-adhoc", "deepfake/datasets/field/youtube-shorts", "field"),
     ]
-    for model in ("xception", "timesformer", "videomae", "video-swin", "convnext", "raft", "gmflow"):
+    for model in ("xception", "timesformer", "videomae", "video-swin", "convnext", "raft", "gmflow", "efficientnetb4"):
         pairs.append(
             PrefixPair(
                 EVIDENCE_BUCKET,

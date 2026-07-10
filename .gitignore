@@ -1,5 +1,9 @@
 .venv/
 .env
+.env.*
+env.local
+config/env.local
+gpu_worker/.env
 __pycache__/
 *.pyc
 .idea/

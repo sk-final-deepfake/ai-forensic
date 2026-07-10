@@ -8,25 +8,35 @@ from pathlib import Path
 
 
 def _load_dotenv() -> None:
-    env_path = Path(__file__).resolve().parent / ".env"
-    if not env_path.is_file():
-        return
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv(env_path, override=False)
-        return
-    except ImportError:
-        pass
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+    candidates: list[Path] = [
+        Path(__file__).resolve().parent / ".env",
+    ]
+    forenshield_root = os.getenv("FORENSHIELD_AI_ROOT", "").strip()
+    if forenshield_root:
+        root = Path(forenshield_root)
+        # Typical welabs layout: FORENSHIELD_AI_ROOT=.../forenShield-ai/deepfake
+        candidates.append(root.parent / "config" / "env.local")
+        candidates.append(root / "config" / "env.local")
+    for env_path in candidates:
+        if not env_path.is_file():
             continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip().strip("'\"")
-        if key and key not in os.environ:
-            os.environ[key] = value
+        try:
+            from dotenv import load_dotenv
+
+            load_dotenv(env_path, override=False)
+            return
+        except ImportError:
+            pass
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            if key and key not in os.environ:
+                os.environ[key] = value
+        return
 
 
 def _env(name: str, default: str = "") -> str:

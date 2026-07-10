@@ -40,6 +40,107 @@ def _overlay_max_seconds() -> float:
     return max(1.0, float(os.getenv("AI_VISUALIZATION_OVERLAY_MAX_SEC", "60")))
 
 
+def _overlay_yunet_threshold() -> float:
+    """Lower than inference default (0.75) so overlay catches smaller/secondary faces."""
+    return float(os.getenv("AI_VISUALIZATION_YUNET_THRESHOLD", "0.5"))
+
+
+def _bbox_iou(
+    a: tuple[int, int, int, int],
+    b: tuple[int, int, int, int],
+) -> float:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ax2, ay2 = ax + aw, ay + ah
+    bx2, by2 = bx + bw, by + bh
+    inter_x1 = max(ax, bx)
+    inter_y1 = max(ay, by)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+    if inter_x2 <= inter_x1 or inter_y2 <= inter_y1:
+        return 0.0
+    inter = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+    union = aw * ah + bw * bh - inter
+    if union <= 0:
+        return 0.0
+    return inter / union
+
+
+def _resolve_scored_bbox(
+    face: dict[str, Any],
+    detected: list[tuple[int, int, int, int]],
+) -> tuple[int, int, int, int] | None:
+    bbox = face.get("bbox")
+    if bbox is None:
+        bbox = _bbox_from_row(face)
+    if isinstance(bbox, tuple) and len(bbox) >= 4:
+        return int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+    face_index = int(face.get("face_index", 0))
+    if face_index < len(detected):
+        return detected[face_index]
+    return None
+
+
+def _enrich_faces_for_overlay(
+    frame: np.ndarray,
+    scored_faces: list[dict[str, Any]],
+    cropper: Any,
+    *,
+    fallback_score: float = 0.0,
+) -> list[dict[str, Any]]:
+    """Draw every YuNet-detected face; map fusion scores by bbox IoU / face_index."""
+    detected = _face_bboxes_on_frame(cropper, frame)
+    if not detected:
+        return [
+            {
+                "bbox": bbox,
+                "score": float(face["score"]),
+                "face_index": int(face.get("face_index", idx)),
+            }
+            for idx, face in enumerate(scored_faces)
+            if (bbox := _resolve_scored_bbox(face, [])) is not None
+        ]
+
+    frame_default = max((float(face["score"]) for face in scored_faces), default=fallback_score)
+    used_detection: set[int] = set()
+    enriched: list[dict[str, Any]] = []
+
+    for face in scored_faces:
+        score = float(face["score"])
+        face_index = int(face.get("face_index", 0))
+        scored_bbox = _resolve_scored_bbox(face, detected)
+        if scored_bbox is None:
+            continue
+
+        best_j = -1
+        best_iou = 0.0
+        for j, det in enumerate(detected):
+            if j in used_detection:
+                continue
+            iou = _bbox_iou(scored_bbox, det)
+            if iou > best_iou:
+                best_iou = iou
+                best_j = j
+
+        if best_j >= 0 and best_iou >= 0.2:
+            used_detection.add(best_j)
+            enriched.append({"bbox": detected[best_j], "score": score, "face_index": face_index})
+        else:
+            enriched.append({"bbox": scored_bbox, "score": score, "face_index": face_index})
+            for j, det in enumerate(detected):
+                if _bbox_iou(scored_bbox, det) >= 0.5:
+                    used_detection.add(j)
+                    break
+
+    for j, det in enumerate(detected):
+        if j in used_detection:
+            continue
+        enriched.append({"bbox": det, "score": frame_default, "face_index": j})
+
+    enriched.sort(key=lambda item: (item["face_index"], -item["score"]))
+    return enriched
+
+
 def _timestamp_label(seconds: float) -> str:
     total = max(0, int(seconds))
     mm, ss = divmod(total, 60)
@@ -98,15 +199,19 @@ def _score_map(per_frame_scores: list[dict[str, Any]]) -> dict[int, float]:
     return mapping
 
 
-def _draw_faces_overlay(frame: np.ndarray, faces: list[dict[str, Any]], cropper: Any) -> np.ndarray:
+def _draw_faces_overlay(frame: np.ndarray, faces: list[dict[str, Any]], cropper: Any | None = None) -> np.ndarray:
     output = frame
     for face in faces:
         bbox = face.get("bbox")
-        if bbox is None:
+        if bbox is None and cropper is not None:
             detected = _face_bboxes_on_frame(cropper, frame)
             face_index = int(face.get("face_index", 0))
             if face_index < len(detected):
                 bbox = detected[face_index]
+        if bbox is None:
+            continue
+        if isinstance(bbox, dict):
+            bbox = _bbox_from_row({"bbox": bbox})
         if bbox is None:
             continue
         output = _draw_face_overlay(output, bbox, float(face["score"]))
@@ -287,7 +392,13 @@ def build_visualization_artifacts(
     from face_crop import create_face_cropper
 
     work_dir.mkdir(parents=True, exist_ok=True)
-    cropper = create_face_cropper(method="yunet", padding=0.3, square=True, human_only=True)
+    cropper = create_face_cropper(
+        method="yunet",
+        padding=0.3,
+        square=True,
+        human_only=True,
+        yunet_score_threshold=_overlay_yunet_threshold(),
+    )
 
     representative_rows = _pick_representative_rows(per_frame_scores, _max_representative_frames())
     representative_frames: list[dict[str, Any]] = []
@@ -398,8 +509,12 @@ def _build_overlay_video(
     max_frames = int(_overlay_max_seconds() * fps)
     raw_overlay_path = work_dir / "overlay_raw.mp4"
     overlay_path = work_dir / "overlay.mp4"
-    scored_frame_indices = sorted(faces_by_frame)   # ← faces_by_frame 으로 변경
+    scored_frame_indices = sorted(faces_by_frame)
     nearest_window = max(1, int(fps))
+    global_fallback_score = max(
+        (float(face["score"]) for faces in faces_by_frame.values() for face in faces),
+        default=0.0,
+    )
     writer = cv2.VideoWriter(
         str(raw_overlay_path),
         cv2.VideoWriter_fourcc(*"mp4v"),
@@ -430,8 +545,14 @@ def _build_overlay_video(
                         for face in faces_by_frame.get(nearest_index, [])
                     ]
 
-            if faces:
-                frame = _draw_faces_overlay(frame, faces, cropper)
+            enriched = _enrich_faces_for_overlay(
+                frame,
+                faces or [],
+                cropper,
+                fallback_score=global_fallback_score,
+            )
+            if enriched:
+                frame = _draw_faces_overlay(frame, enriched)
 
             writer.write(frame)
             frame_index += 1

@@ -34,6 +34,46 @@ class VisualizationArtifactUnitTests(unittest.TestCase):
     def test_timestamp_label(self) -> None:
         self.assertEqual(viz._timestamp_label(65.0), "01:05")
 
+    def test_bbox_iou(self) -> None:
+        self.assertAlmostEqual(viz._bbox_iou((0, 0, 10, 10), (0, 0, 10, 10)), 1.0)
+        self.assertEqual(viz._bbox_iou((0, 0, 10, 10), (20, 20, 10, 10)), 0.0)
+
+    def test_enrich_faces_for_overlay_adds_unscored_detections(self) -> None:
+        class _Cropper:
+            def detect_all_human_face_bboxes(self, _frame: np.ndarray) -> list[tuple[int, int, int, int]]:
+                return [(10, 20, 30, 40), (100, 20, 25, 25)]
+
+        frame = np.zeros((120, 160, 3), dtype=np.uint8)
+        enriched = viz._enrich_faces_for_overlay(
+            frame,
+            [{"score": 0.8, "face_index": 0, "bbox": (10, 20, 30, 40)}],
+            _Cropper(),
+            fallback_score=0.1,
+        )
+        self.assertEqual(len(enriched), 2)
+        scores_by_index = {row["face_index"]: row["score"] for row in enriched}
+        self.assertEqual(scores_by_index[0], 0.8)
+        self.assertEqual(scores_by_index[1], 0.8)
+
+    def test_enrich_faces_for_overlay_matches_by_iou(self) -> None:
+        class _Cropper:
+            def detect_all_human_face_bboxes(self, _frame: np.ndarray) -> list[tuple[int, int, int, int]]:
+                return [(12, 22, 28, 38), (95, 18, 30, 30)]
+
+        frame = np.zeros((120, 160, 3), dtype=np.uint8)
+        enriched = viz._enrich_faces_for_overlay(
+            frame,
+            [
+                {"score": 0.3, "face_index": 0, "bbox": (10, 20, 30, 40)},
+                {"score": 0.9, "face_index": 1, "bbox": (100, 20, 25, 25)},
+            ],
+            _Cropper(),
+        )
+        self.assertEqual(len(enriched), 2)
+        scores_by_index = {row["face_index"]: row["score"] for row in enriched}
+        self.assertEqual(scores_by_index[0], 0.3)
+        self.assertEqual(scores_by_index[1], 0.9)
+
     def test_finalize_overlay_video_prefers_h264_when_ffmpeg_available(self) -> None:
         if not viz._ffmpeg_path():
             self.skipTest("ffmpeg not installed")

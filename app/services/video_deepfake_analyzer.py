@@ -29,17 +29,17 @@ from app.services.late_fusion import (
     FusionConfig,
     build_analysis_reasons,
     build_clip_risks,
-    build_frame_risks,
+    build_fused_per_frame_scores,
     build_module_timelines,
     build_pair_risks,
     build_suspicious_segments,
+    collapse_frame_risks_by_frame,
     confidence_from_module_scores,
     fuse_scores,
     load_fusion_config,
     risk_level_from_score,
     score_detected,
 )
-
 
 logger = logging.getLogger("ai_fastapi.video_deepfake_analyzer")
 
@@ -258,9 +258,27 @@ def build_response_from_modules(
     )
 
     per_frame = []
+    temporal_per_frame: list[dict[str, Any]] = []
     if cnn and cnn.details:
         per_frame = cnn.details.get("per_frame_scores") or []
-    frame_risks_raw = build_frame_risks(video_path, per_frame)
+    if temporal and temporal.details:
+        breakdown = temporal.details.get("score_breakdown") or {}
+        temporal_per_frame = breakdown.get("per_frame_scores") or temporal.details.get("per_frame_scores") or []
+
+    fused_per_frame = build_fused_per_frame_scores(
+        cnn_scores=per_frame,
+        temporal_scores=temporal_per_frame,
+        optical_score=float(s_optical),
+        fuse_fn=lambda *, cnn_score, temporal_score, optical_score: fuse_scores(
+            s_cnn=cnn_score,
+            s_temporal=temporal_score,
+            s_optical=optical_score,
+            config=config,
+        ),
+        temporal_video_score=float(s_temporal) if s_temporal is not None else None,
+    ) if per_frame else []
+
+    frame_risks_raw = collapse_frame_risks_by_frame(fused_per_frame or per_frame, video_path)
     frame_risks = [FrameRiskItem(**row) for row in frame_risks_raw]
     suspicious_raw = build_suspicious_segments(
         frame_risks_raw,
@@ -269,8 +287,6 @@ def build_response_from_modules(
     )
     suspicious_segments = [SuspiciousSegmentItem(**row) for row in suspicious_raw]
 
-    temporal = by_module.get("temporal")
-    optical = by_module.get("optical")
     clip_risks_raw: list[dict] = []
     if temporal and temporal.details:
         breakdown = temporal.details.get("score_breakdown") or {}
@@ -318,11 +334,11 @@ def build_response_from_modules(
 
     representative_frames: list[RepresentativeFrameItem] = []
     overlay_video_url: str | None = None
-    if work_dir is not None and per_frame and video_path.is_file():
+    if work_dir is not None and (fused_per_frame or per_frame) and video_path.is_file():
         try:
             viz = build_visualization_artifacts(
                 video_path=video_path,
-                per_frame_scores=per_frame,
+                per_frame_scores=fused_per_frame or per_frame,
                 evidence_id=_resolve_evidence_id(request),
                 analysis_request_id=request.analysisRequestId,
                 work_dir=work_dir / "visualization",

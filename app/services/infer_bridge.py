@@ -150,6 +150,7 @@ class InferRuntime:
             clip_frames=8,
             clip_size=224,
             face_cropper=self._face_cropper,
+            aggregate="max",
         )
         breakdown = result.get("score_breakdown") or {}
         per_clip = breakdown.get("per_clip") or []
@@ -162,10 +163,12 @@ class InferRuntime:
                     "clip_start_frame": row.get("clip_start_frame"),
                     "clip_end_frame": row.get("clip_end_frame"),
                     "frame_indices": row.get("frame_indices") or [],
+                    **({"face_index": row["face_index"]} if row.get("face_index") is not None else {}),
                 }
                 for row in per_clip
                 if row.get("prob_fake") is not None
             ]
+        per_frame_scores = breakdown.get("per_frame_scores") or []
         return ModuleInferResult(
             module="temporal",
             model_name="timesformer",
@@ -177,6 +180,7 @@ class InferRuntime:
                 "score_breakdown": breakdown,
                 "per_clip_scores": per_clip_scores,
                 "per_clip": per_clip,
+                "per_frame_scores": per_frame_scores,
                 "frames_used": result.get("frames_used"),
             },
         )

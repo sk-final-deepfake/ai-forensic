@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.services.late_fusion import build_fused_per_frame_scores, collapse_frame_risks_by_frame
 from app.services.visualization_artifacts import build_visualization_artifacts
 from gpu_worker.config import WorkerConfig
 from gpu_worker.pipeline.fusion import FusionResult, apply_late_fusion, load_fusion_config
@@ -75,14 +76,81 @@ def _to_segments(rows: list[dict[str, Any]]) -> list[SuspiciousSegmentItem]:
 
 
 def _to_visualization_scores(frame_risks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "frame_index": int(row["frameIndex"]),
-            "fake_score": float(row["riskScore"]),
+    scores: list[dict[str, Any]] = []
+    for row in frame_risks:
+        frame_index = row.get("frameIndex", row.get("frame_index"))
+        score = row.get("riskScore", row.get("fake_score"))
+        if frame_index is None or score is None:
+            continue
+        entry = {
+            "frame_index": int(frame_index),
+            "fake_score": float(score),
         }
-        for row in frame_risks
-        if row.get("frameIndex") is not None and row.get("riskScore") is not None
-    ]
+        if row.get("face_index") is not None:
+            entry["face_index"] = int(row["face_index"])
+        if row.get("faceIndex") is not None:
+            entry["face_index"] = int(row["faceIndex"])
+        if row.get("bbox") is not None:
+            entry["bbox"] = row["bbox"]
+        scores.append(entry)
+    return scores
+
+
+def _module_per_frame_scores(module: ModuleRunResult) -> list[dict[str, Any]]:
+    raw = module.raw or {}
+    breakdown = raw.get("score_breakdown") or {}
+    rows = breakdown.get("per_frame_scores") or breakdown.get("per_frame") or []
+    if rows:
+        normalized: list[dict[str, Any]] = []
+        for row in rows:
+            frame_index = row.get("frame_index", row.get("frameIndex"))
+            score = row.get("fake_score", row.get("prob_fake", row.get("riskScore")))
+            if frame_index is None or score is None:
+                continue
+            entry = {
+                "frame_index": int(frame_index),
+                "fake_score": float(score),
+            }
+            if row.get("face_index") is not None:
+                entry["face_index"] = int(row["face_index"])
+            if row.get("bbox") is not None:
+                entry["bbox"] = row["bbox"]
+            normalized.append(entry)
+        return normalized
+    if module.frame_risks:
+        return _to_visualization_scores(module.frame_risks)
+    return []
+
+
+def _build_fused_visualization_scores(
+    *,
+    modules: dict[str, ModuleRunResult],
+    fusion_config: dict[str, Any],
+    module_meta: dict[str, dict[str, str]],
+) -> list[dict[str, Any]]:
+    from app.services.late_fusion import build_fused_per_frame_scores
+
+    cnn_scores = _module_per_frame_scores(modules["cnn"])
+    temporal_scores = _module_per_frame_scores(modules["temporal"])
+    if not cnn_scores:
+        return []
+
+    def fuse_fn(*, cnn_score: float, temporal_score: float, optical_score: float) -> float:
+        return apply_late_fusion(
+            cnn_score=cnn_score,
+            temporal_score=temporal_score,
+            optical_score=optical_score,
+            config=fusion_config,
+            module_meta=module_meta,
+        ).score
+
+    return build_fused_per_frame_scores(
+        cnn_scores=cnn_scores,
+        temporal_scores=temporal_scores,
+        optical_score=float(modules["optical"].video_score),
+        fuse_fn=fuse_fn,
+        temporal_video_score=float(modules["temporal"].video_score),
+    )
 
 
 def _fallback_visualization_scores(video_path: Path, score: float, fps: float) -> list[dict[str, Any]]:
@@ -196,21 +264,29 @@ def build_analysis_response(
     fusion_meta = _model_meta(fusion_config, "fusion")
     representative_frames = None
     overlay_video_url = None
+    fused_visualization_scores: list[dict[str, Any]] = []
 
     try:
-        visualization_scores = _to_visualization_scores(cnn.frame_risks)
+        fused_visualization_scores = _build_fused_visualization_scores(
+            modules=modules,
+            fusion_config=fusion_config,
+            module_meta=module_meta,
+        )
+        visualization_scores = fused_visualization_scores
         if not visualization_scores:
-            visualization_scores = _fallback_visualization_scores(video_path, cnn.video_score, fps)
+            visualization_scores = _to_visualization_scores(cnn.frame_risks)
+        if not visualization_scores:
+            visualization_scores = _fallback_visualization_scores(video_path, fusion.score, fps)
             logger.info(
                 "Using fallback visualization scores: evidenceId=%s analysisRequestId=%s score=%s points=%s",
                 evidence_id,
                 analysis_request_id,
-                cnn.video_score,
+                fusion.score,
                 len(visualization_scores),
             )
         else:
             logger.info(
-                "Using CNN frame risks for visualization: evidenceId=%s analysisRequestId=%s points=%s",
+                "Using fused per-face scores for visualization: evidenceId=%s analysisRequestId=%s points=%s",
                 evidence_id,
                 analysis_request_id,
                 len(visualization_scores),
@@ -249,12 +325,17 @@ def build_analysis_response(
             analysis_request_id,
         )
 
+    fused_frame_risks = collapse_frame_risks_by_frame(
+        fused_visualization_scores or _module_per_frame_scores(cnn),
+        video_path,
+    )
+
     video_item = AnalysisVideoResultItem(
         modelName=str(fusion_meta.get("modelName", "Late Fusion")),
         modelVersion=str(fusion_meta.get("modelVersion", fusion_config.get("fusion_version", "fusion-v4-ts-gated"))),
         deepfakeDetected=fusion.detected,
         deepfakeScore=fusion.score,
-        frameRisks=_to_frame_risks(cnn.frame_risks) or None,
+        frameRisks=_to_frame_risks(fused_frame_risks) or None,
         clipRisks=_to_clip_risks(temporal.clip_risks) or None,
         pairRisks=_to_pair_risks(optical.pair_risks) or None,
         suspiciousSegments=_to_segments(cnn.suspicious_segments) or None,

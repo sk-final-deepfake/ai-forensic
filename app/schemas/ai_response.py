@@ -70,7 +70,6 @@ class RepresentativeFrameItem(BaseModel):
     frameNumber: int | None = None
     score: float | None = None
     imageUrl: str | None = None
-    heatmapUrl: str | None = None
 
 
 class AnalysisVideoResultItem(BaseModel):
@@ -97,7 +96,6 @@ class AnalysisVideoResultItem(BaseModel):
     modelScores: list[ModelScoreItem] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)
     representativeFrames: list[RepresentativeFrameItem] = Field(default_factory=list)
-    heatmapImageUrl: str | None = None
     overlayVideoUrl: str | None = None
 
 

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 import os
+import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -16,11 +19,12 @@ from app.services.s3_artifact_upload import (
     upload_file,
 )
 
+logger = logging.getLogger("ai_fastapi.visualization_artifacts")
+
 
 @dataclass(frozen=True)
 class VisualizationArtifacts:
     representative_frames: list[dict[str, Any]]
-    heatmap_image_url: str | None
     overlay_video_url: str | None
 
 
@@ -155,14 +159,95 @@ def _pick_representative_rows(per_frame_scores: list[dict[str, Any]], limit: int
     return rows[:limit]
 
 
+def _ffmpeg_path() -> str | None:
+    return os.getenv("FFMPEG_PATH") or shutil.which("ffmpeg")
+
+
+def _transcode_overlay_to_h264(source: Path, dest: Path) -> bool:
+    """Re-encode OpenCV mp4v output to browser-playable H.264 (yuv420p)."""
+    ffmpeg = _ffmpeg_path()
+    if not ffmpeg or not source.is_file():
+        return False
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(source),
+        "-c:v",
+        "libx264",
+        "-preset",
+        os.getenv("AI_VISUALIZATION_OVERLAY_PRESET", "veryfast"),
+        "-crf",
+        os.getenv("AI_VISUALIZATION_OVERLAY_CRF", "23"),
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-an",
+        str(dest),
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        logger.warning("Overlay H.264 transcode failed: %s", exc)
+        return False
+
+    return dest.is_file() and dest.stat().st_size > 0
+
+
+def _finalize_overlay_video(raw_path: Path, output_path: Path) -> Path | None:
+    if not raw_path.is_file() or raw_path.stat().st_size == 0:
+        return None
+
+    if _transcode_overlay_to_h264(raw_path, output_path):
+        try:
+            raw_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return output_path
+
+    logger.warning("ffmpeg unavailable or transcode failed; overlay may not play in browsers: %s", raw_path)
+    if output_path != raw_path:
+        try:
+            shutil.move(str(raw_path), str(output_path))
+        except OSError:
+            return raw_path
+    return output_path
+
+
 def _maybe_upload(local_path: Path, *, evidence_id: int, analysis_request_id: int, name: str) -> str | None:
     if not s3_upload_enabled():
+        logger.warning(
+            "S3 visualization upload is disabled: evidenceId=%s analysisRequestId=%s file=%s",
+            evidence_id,
+            analysis_request_id,
+            name,
+        )
         return None
     bucket = artifact_bucket()
     if not bucket:
+        logger.warning(
+            "S3 visualization bucket is not configured: evidenceId=%s analysisRequestId=%s file=%s",
+            evidence_id,
+            analysis_request_id,
+            name,
+        )
         return None
     key = f"{artifact_prefix(evidence_id, analysis_request_id)}/{name}"
-    return upload_file(local_path, bucket=bucket, key=key)
+    url = upload_file(local_path, bucket=bucket, key=key)
+    logger.info(
+        "Visualization artifact upload result: evidenceId=%s analysisRequestId=%s key=%s uploaded=%s",
+        evidence_id,
+        analysis_request_id,
+        key,
+        bool(url),
+    )
+    return url
 
 
 def build_visualization_artifacts(
@@ -173,8 +258,28 @@ def build_visualization_artifacts(
     analysis_request_id: int,
     work_dir: Path,
 ) -> VisualizationArtifacts | None:
-    if not _enabled() or not per_frame_scores:
+    if not _enabled():
+        logger.warning(
+            "Visualization artifacts are disabled: evidenceId=%s analysisRequestId=%s",
+            evidence_id,
+            analysis_request_id,
+        )
         return None
+    if not per_frame_scores:
+        logger.warning(
+            "Visualization artifacts skipped because frame scores are empty: evidenceId=%s analysisRequestId=%s",
+            evidence_id,
+            analysis_request_id,
+        )
+        return None
+
+    logger.info(
+        "Building visualization artifacts: evidenceId=%s analysisRequestId=%s scores=%s video=%s",
+        evidence_id,
+        analysis_request_id,
+        len(per_frame_scores),
+        video_path,
+    )
 
     ensure_infer_scripts_on_path()
     from face_crop import create_face_cropper
@@ -191,6 +296,12 @@ def build_visualization_artifacts(
             risk_score = float(row.get("fake_score", row.get("prob_fake")))
             frame, time_sec = _read_frame_at_index(video_path, frame_index)
             if frame is None:
+                logger.warning(
+                    "Representative frame could not be read: evidenceId=%s analysisRequestId=%s frameIndex=%s",
+                    evidence_id,
+                    analysis_request_id,
+                    frame_index,
+                )
                 continue
             bbox = _bbox_from_row(row)
             if bbox is None:
@@ -199,26 +310,22 @@ def build_visualization_artifacts(
                 if face_index < len(detected):
                     bbox = detected[face_index]
             if bbox is None:
+                logger.warning(
+                    "Representative frame has no detected face: evidenceId=%s analysisRequestId=%s frameIndex=%s",
+                    evidence_id,
+                    analysis_request_id,
+                    frame_index,
+                )
                 continue
 
             frame_path = work_dir / f"frame_{idx:02d}.jpg"
-            heatmap_path = work_dir / f"frame_{idx:02d}_heatmap.jpg"
             cv2.imwrite(str(frame_path), frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
-
-            heat_layer = _render_heatmap_layer(frame.shape, bbox, risk_score)
-            cv2.imwrite(str(heatmap_path), heat_layer, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
 
             image_url = _maybe_upload(
                 frame_path,
                 evidence_id=evidence_id,
                 analysis_request_id=analysis_request_id,
                 name=frame_path.name,
-            )
-            heatmap_url = _maybe_upload(
-                heatmap_path,
-                evidence_id=evidence_id,
-                analysis_request_id=analysis_request_id,
-                name=heatmap_path.name,
             )
 
             representative_frames.append(
@@ -228,11 +335,9 @@ def build_visualization_artifacts(
                     "frameNumber": frame_index,
                     "score": round(risk_score, 6),
                     "imageUrl": image_url,
-                    "heatmapUrl": heatmap_url,
                 }
             )
 
-        heatmap_image_url = representative_frames[0]["heatmapUrl"] if representative_frames else None
         overlay_video_url = _build_overlay_video(
             video_path=video_path,
             faces_by_frame=_score_map_by_frame(per_frame_scores),
@@ -243,11 +348,22 @@ def build_visualization_artifacts(
         )
 
         if not representative_frames and overlay_video_url is None:
+            logger.warning(
+                "Visualization artifacts produced no output: evidenceId=%s analysisRequestId=%s",
+                evidence_id,
+                analysis_request_id,
+            )
             return None
 
+        logger.info(
+            "Visualization artifacts built: evidenceId=%s analysisRequestId=%s frames=%s overlay=%s",
+            evidence_id,
+            analysis_request_id,
+            len(representative_frames),
+            bool(overlay_video_url),
+        )
         return VisualizationArtifacts(
             representative_frames=representative_frames,
-            heatmap_image_url=heatmap_image_url,
             overlay_video_url=overlay_video_url,
         )
     finally:
@@ -278,9 +394,12 @@ def _build_overlay_video(
         return None
 
     max_frames = int(_overlay_max_seconds() * fps)
+    raw_overlay_path = work_dir / "overlay_raw.mp4"
     overlay_path = work_dir / "overlay.mp4"
+    scored_frame_indices = sorted(faces_by_frame)   # ← faces_by_frame 으로 변경
+    nearest_window = max(1, int(fps))
     writer = cv2.VideoWriter(
-        str(overlay_path),
+        str(raw_overlay_path),
         cv2.VideoWriter_fourcc(*"mp4v"),
         fps,
         (width, height),
@@ -295,20 +414,45 @@ def _build_overlay_video(
             ok, frame = cap.read()
             if not ok or frame is None:
                 break
+
             faces = faces_by_frame.get(frame_index)
+            if faces is None and scored_frame_indices:
+                nearest_index = min(scored_frame_indices, key=lambda idx: abs(idx - frame_index))
+                if abs(nearest_index - frame_index) <= nearest_window:
+                    faces = [
+                        {
+                            "score": face["score"],
+                            "face_index": face["face_index"],
+                            "bbox": None,
+                        }
+                        for face in faces_by_frame.get(nearest_index, [])
+                    ]
+
             if faces:
                 frame = _draw_faces_overlay(frame, faces, cropper)
+
             writer.write(frame)
             frame_index += 1
     finally:
         writer.release()
         cap.release()
 
-    if frame_index == 0 or not overlay_path.is_file():
+    if frame_index == 0 or not raw_overlay_path.is_file():
+        logger.warning(
+            "Overlay video was not created: evidenceId=%s analysisRequestId=%s frames=%s path=%s",
+            evidence_id,
+            analysis_request_id,
+            frame_index,
+            raw_overlay_path,
+        )
+        return None
+
+    playable_overlay = _finalize_overlay_video(raw_overlay_path, overlay_path)
+    if playable_overlay is None:
         return None
 
     return _maybe_upload(
-        overlay_path,
+        playable_overlay,
         evidence_id=evidence_id,
         analysis_request_id=analysis_request_id,
         name=overlay_path.name,

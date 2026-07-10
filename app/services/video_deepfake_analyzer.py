@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,8 @@ from app.services.late_fusion import (
     score_detected,
 )
 
+
+logger = logging.getLogger("ai_fastapi.video_deepfake_analyzer")
 
 FUSION_MODEL_NAME = "forenshield-late-fusion"
 NO_HUMAN_FACE_STATUSES = frozenset({"no_face", "no_human_face", "skipped_no_human_face"})
@@ -314,7 +317,6 @@ def build_response_from_modules(
     )
 
     representative_frames: list[RepresentativeFrameItem] = []
-    heatmap_image_url: str | None = None
     overlay_video_url: str | None = None
     if work_dir is not None and per_frame and video_path.is_file():
         try:
@@ -327,10 +329,13 @@ def build_response_from_modules(
             )
             if viz is not None:
                 representative_frames = [RepresentativeFrameItem(**row) for row in viz.representative_frames]
-                heatmap_image_url = viz.heatmap_image_url
                 overlay_video_url = viz.overlay_video_url
         except Exception:
-            pass
+            logger.exception(
+                "Failed to build visualization artifacts: evidenceId=%s analysisRequestId=%s",
+                request.evidenceId or request.fileId,
+                request.analysisRequestId,
+            )
 
     video_result = AnalysisVideoResultItem(
         deepfakeDetected=fusion_detected,
@@ -347,7 +352,6 @@ def build_response_from_modules(
         modelScores=model_scores,
         evidence=reasons,
         representativeFrames=representative_frames,
-        heatmapImageUrl=heatmap_image_url,
         overlayVideoUrl=overlay_video_url,
     )
 

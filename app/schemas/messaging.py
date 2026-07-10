@@ -80,7 +80,6 @@ class RepresentativeFrameItem(BaseModel):
     frameNumber: int | None = None
     score: float | None = None
     imageUrl: str | None = None
-    heatmapUrl: str | None = None
 
 
 class AnalysisVideoResultItem(BaseModel):
@@ -106,7 +105,6 @@ class AnalysisVideoResultItem(BaseModel):
     moduleTimelines: list[ModuleTimelineItem] | None = None
     modelScores: list[ModelScoreItem] | None = None
     representativeFrames: list[RepresentativeFrameItem] | None = None
-    heatmapImageUrl: str | None = None
     overlayVideoUrl: str | None = None
 
 

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger("ai_fastapi.s3_artifact_upload")
 
 
 def s3_upload_enabled() -> bool:
@@ -30,9 +33,16 @@ def upload_file(local_path: Path, *, bucket: str, key: str) -> str | None:
     try:
         import boto3
     except ImportError:
+        logger.exception("boto3 is not installed; skipping S3 artifact upload")
         return None
 
     if not local_path.is_file() or not bucket or not key:
+        logger.warning(
+            "Skipping S3 artifact upload because inputs are invalid: path=%s bucket=%s key=%s",
+            local_path,
+            bucket,
+            key,
+        )
         return None
 
     region = os.getenv("AWS_REGION", "ap-northeast-2")
@@ -43,6 +53,12 @@ def upload_file(local_path: Path, *, bucket: str, key: str) -> str | None:
     try:
         client.upload_file(str(local_path), bucket, key, ExtraArgs=extra)
     except Exception:
+        logger.exception(
+            "Failed to upload visualization artifact to S3: path=%s bucket=%s key=%s",
+            local_path,
+            bucket,
+            key,
+        )
         return None
 
     expires = int(os.getenv("AI_VISUALIZATION_PRESIGN_SEC", "604800"))
@@ -53,6 +69,11 @@ def upload_file(local_path: Path, *, bucket: str, key: str) -> str | None:
             ExpiresIn=expires,
         )
     except Exception:
+        logger.exception(
+            "Failed to create presigned URL for visualization artifact: bucket=%s key=%s",
+            bucket,
+            key,
+        )
         return f"s3://{bucket}/{key}"
 
 

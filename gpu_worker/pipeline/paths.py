@@ -10,6 +10,7 @@ def setup_script_paths(cfg: WorkerConfig) -> Path:
     """deepfake infer + project eval scripts를 import path에 추가."""
     candidates = [
         cfg.deepfake_root / "scripts" / "infer",
+        cfg.deepfake_root / "scripts" / "eval",
         cfg.project_root / "scripts" / "eval",
         cfg.project_root / "deepfake" / "scripts" / "infer",
     ]

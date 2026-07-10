@@ -60,12 +60,12 @@ class ResponseVisualizationTests(unittest.TestCase):
                 AnalysisVideoResultItem(
                     deepfakeDetected=True,
                     deepfakeScore=0.8,
-                    heatmapImageUrl="https://cdn.example/heatmap.jpg",
+                    overlayVideoUrl="https://cdn.example/overlay.mp4",
                 )
             ],
         )
         updated = attach_visualization_artifacts(job, response)
-        self.assertEqual(updated.results[0].heatmapImageUrl, "https://cdn.example/heatmap.jpg")
+        self.assertEqual(updated.results[0].overlayVideoUrl, "https://cdn.example/overlay.mp4")
 
     @patch("app.services.response_visualization.build_visualization_payload")
     @patch("app.services.response_visualization.download_messaging_job_video")
@@ -83,10 +83,8 @@ class ResponseVisualizationTests(unittest.TestCase):
                     "frameNumber": 25,
                     "score": 0.9,
                     "imageUrl": "https://cdn.example/frame.jpg",
-                    "heatmapUrl": "https://cdn.example/heatmap.jpg",
                 }
             ],
-            "heatmapImageUrl": "https://cdn.example/heatmap.jpg",
             "overlayVideoUrl": "https://cdn.example/overlay.mp4",
         }
 
@@ -115,7 +113,6 @@ class ResponseVisualizationTests(unittest.TestCase):
         updated = attach_visualization_artifacts(job, response)
         video = updated.results[0]
         self.assertEqual(video.overlayVideoUrl, "https://cdn.example/overlay.mp4")
-        self.assertEqual(video.heatmapImageUrl, "https://cdn.example/heatmap.jpg")
         self.assertEqual(len(video.representativeFrames or []), 1)
 
     def test_build_visualization_payload_returns_none_without_scores(self) -> None:

@@ -25,7 +25,6 @@ logger = logging.getLogger("ai_fastapi.visualization_artifacts")
 @dataclass(frozen=True)
 class VisualizationArtifacts:
     representative_frames: list[dict[str, Any]]
-    heatmap_image_url: str | None
     overlay_video_url: str | None
 
 
@@ -274,23 +273,13 @@ def build_visualization_artifacts(
                 continue
 
             frame_path = work_dir / f"frame_{idx:02d}.jpg"
-            heatmap_path = work_dir / f"frame_{idx:02d}_heatmap.jpg"
             cv2.imwrite(str(frame_path), frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
-
-            heat_layer = _render_heatmap_layer(frame.shape, bbox, risk_score)
-            cv2.imwrite(str(heatmap_path), heat_layer, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
 
             image_url = _maybe_upload(
                 frame_path,
                 evidence_id=evidence_id,
                 analysis_request_id=analysis_request_id,
                 name=frame_path.name,
-            )
-            heatmap_url = _maybe_upload(
-                heatmap_path,
-                evidence_id=evidence_id,
-                analysis_request_id=analysis_request_id,
-                name=heatmap_path.name,
             )
 
             representative_frames.append(
@@ -300,11 +289,9 @@ def build_visualization_artifacts(
                     "frameNumber": frame_index,
                     "score": round(risk_score, 6),
                     "imageUrl": image_url,
-                    "heatmapUrl": heatmap_url,
                 }
             )
 
-        heatmap_image_url = representative_frames[0]["heatmapUrl"] if representative_frames else None
         overlay_video_url = _build_overlay_video(
             video_path=video_path,
             score_by_frame=_score_map(per_frame_scores),
@@ -323,16 +310,14 @@ def build_visualization_artifacts(
             return None
 
         logger.info(
-            "Visualization artifacts built: evidenceId=%s analysisRequestId=%s frames=%s heatmap=%s overlay=%s",
+            "Visualization artifacts built: evidenceId=%s analysisRequestId=%s frames=%s overlay=%s",
             evidence_id,
             analysis_request_id,
             len(representative_frames),
-            bool(heatmap_image_url),
             bool(overlay_video_url),
         )
         return VisualizationArtifacts(
             representative_frames=representative_frames,
-            heatmap_image_url=heatmap_image_url,
             overlay_video_url=overlay_video_url,
         )
     finally:

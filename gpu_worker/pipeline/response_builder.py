@@ -195,7 +195,6 @@ def build_analysis_response(
     module_timelines = _build_module_timelines(modules, fusion_config)
     fusion_meta = _model_meta(fusion_config, "fusion")
     representative_frames = None
-    heatmap_image_url = None
     overlay_video_url = None
 
     try:
@@ -228,14 +227,12 @@ def build_analysis_response(
             representative_frames = [
                 RepresentativeFrameItem(**row) for row in viz.representative_frames
             ]
-            heatmap_image_url = viz.heatmap_image_url
             overlay_video_url = viz.overlay_video_url
             logger.info(
-                "Visualization artifacts attached: evidenceId=%s analysisRequestId=%s frames=%s heatmap=%s overlay=%s",
+                "Visualization artifacts attached: evidenceId=%s analysisRequestId=%s frames=%s overlay=%s",
                 evidence_id,
                 analysis_request_id,
                 len(representative_frames or []),
-                bool(heatmap_image_url),
                 bool(overlay_video_url),
             )
         else:
@@ -266,7 +263,6 @@ def build_analysis_response(
         moduleTimelines=module_timelines,
         modelScores=model_scores,
         representativeFrames=representative_frames,
-        heatmapImageUrl=heatmap_image_url,
         overlayVideoUrl=overlay_video_url,
     )
 

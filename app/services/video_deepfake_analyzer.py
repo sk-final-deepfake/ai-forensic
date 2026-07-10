@@ -317,7 +317,6 @@ def build_response_from_modules(
     )
 
     representative_frames: list[RepresentativeFrameItem] = []
-    heatmap_image_url: str | None = None
     overlay_video_url: str | None = None
     if work_dir is not None and per_frame and video_path.is_file():
         try:
@@ -330,7 +329,6 @@ def build_response_from_modules(
             )
             if viz is not None:
                 representative_frames = [RepresentativeFrameItem(**row) for row in viz.representative_frames]
-                heatmap_image_url = viz.heatmap_image_url
                 overlay_video_url = viz.overlay_video_url
         except Exception:
             logger.exception(
@@ -354,7 +352,6 @@ def build_response_from_modules(
         modelScores=model_scores,
         evidence=reasons,
         representativeFrames=representative_frames,
-        heatmapImageUrl=heatmap_image_url,
         overlayVideoUrl=overlay_video_url,
     )
 

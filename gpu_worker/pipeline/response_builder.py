@@ -24,6 +24,7 @@ from gpu_worker.schemas import (
     ModelScoreItem,
     ModuleTimelineItem,
     PairRiskItem,
+    RepresentativeFrameItem,
     SuspiciousSegmentItem,
 )
 
@@ -224,7 +225,9 @@ def build_analysis_response(
             work_dir=cfg.work_dir / "visualization" / f"{evidence_id}_{analysis_request_id}",
         )
         if viz is not None:
-            representative_frames = viz.representative_frames
+            representative_frames = [
+                RepresentativeFrameItem(**row) for row in viz.representative_frames
+            ]
             heatmap_image_url = viz.heatmap_image_url
             overlay_video_url = viz.overlay_video_url
             logger.info(

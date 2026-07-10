@@ -26,7 +26,7 @@ AI worker can attach **representative frame thumbnails**, a **heatmap image URL*
 | `AI_VISUALIZATION_OVERLAY` | `1` | Build overlay MP4 |
 | `AI_VISUALIZATION_OVERLAY_MAX_SEC` | `60` | Max overlay duration |
 | `S3_EVIDENCE_BUCKET` | — | Target bucket (required for URLs) |
-| `AI_VISUALIZATION_PREFIX` | `cases/analysis-artifacts/{evidence_id}/{analysis_request_id}` | S3 key prefix |
+| `AI_VISUALIZATION_PREFIX` | `deepfake/artifacts/analysis/{evidence_id}/{analysis_request_id}` | S3 key prefix (권장) |
 | `AI_VISUALIZATION_PRESIGN_SEC` | `604800` | Presigned URL TTL (7 days) |
 
 ## Notes

@@ -14,6 +14,7 @@ from app.schemas.messaging import (
     AnalysisJobMessage,
     AnalysisResponseMessage,
     AnalysisVideoResultItem,
+    PerFrameFaceScoreItem,
     RepresentativeFrameItem,
 )
 from app.services.visualization_artifacts import build_visualization_artifacts
@@ -43,6 +44,9 @@ def per_frame_scores_from_cnn_raw(raw: dict[str, Any] | None) -> list[dict[str, 
 
 
 def per_frame_scores_from_video_item(video: AnalysisVideoResultItem) -> list[dict[str, Any]]:
+    face_rows = per_frame_face_scores_from_video_item(video)
+    if face_rows:
+        return face_rows
     if video.frameRisks:
         return _per_frame_scores_from_rows(
             [
@@ -54,6 +58,28 @@ def per_frame_scores_from_video_item(video: AnalysisVideoResultItem) -> list[dic
             ]
         )
     return []
+
+
+def per_frame_face_scores_from_video_item(video: AnalysisVideoResultItem) -> list[dict[str, Any]]:
+    rows = video.perFrameFaceScores or []
+    if not rows:
+        return []
+    scores: list[dict[str, Any]] = []
+    for row in rows:
+        entry: dict[str, Any] = {
+            "frame_index": int(row.frameIndex),
+            "face_index": int(row.faceIndex),
+            "fake_score": float(row.riskScore),
+        }
+        if row.bbox is not None:
+            entry["bbox"] = {
+                "x": int(row.bbox.x),
+                "y": int(row.bbox.y),
+                "w": int(row.bbox.w),
+                "h": int(row.bbox.h),
+            }
+        scores.append(entry)
+    return scores
 
 
 def build_visualization_payload(
@@ -155,7 +181,8 @@ def attach_visualization_artifacts(
         return response
 
     video = response.results[0]
-    if _video_item_has_visualization(video):
+    has_face_scores = bool(video.perFrameFaceScores)
+    if _video_item_has_visualization(video) and not has_face_scores:
         return response
 
     per_frame_scores = per_frame_scores_from_video_item(video)

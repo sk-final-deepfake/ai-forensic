@@ -67,6 +67,8 @@ def _bbox_from_row(row: dict[str, Any]) -> tuple[int, int, int, int] | None:
         keys = ("x", "y", "w", "h")
         if all(key in bbox for key in keys):
             return int(bbox["x"]), int(bbox["y"]), int(bbox["w"]), int(bbox["h"])
+    if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+        return int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
     return None
 
 

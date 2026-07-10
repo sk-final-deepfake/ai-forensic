@@ -21,15 +21,19 @@ from gpu_worker.schemas import (
     AnalysisResponseMessage,
     AnalysisVideoResultItem,
     ClipRiskItem,
+    FaceBBoxItem,
     FrameRiskItem,
     ModelScoreItem,
     ModuleTimelineItem,
     PairRiskItem,
+    PerFrameFaceScoreItem,
     RepresentativeFrameItem,
     SuspiciousSegmentItem,
 )
 
 logger = logging.getLogger("gpu_worker.pipeline.response_builder")
+
+NO_FACE_STATUSES = frozenset({"no_face", "no_human_face", "skipped_no_human_face"})
 
 
 def _utc_now() -> str:
@@ -231,6 +235,61 @@ def _build_module_timelines(modules: dict[str, ModuleRunResult], config: dict[st
     return timelines
 
 
+def _to_per_frame_face_score_items(scores: list[dict[str, Any]]) -> list[PerFrameFaceScoreItem]:
+    items: list[PerFrameFaceScoreItem] = []
+    for row in scores:
+        frame_index = row.get("frame_index", row.get("frameIndex"))
+        score = row.get("fake_score", row.get("prob_fake", row.get("riskScore")))
+        if frame_index is None or score is None:
+            continue
+        bbox_item = None
+        bbox = row.get("bbox")
+        if isinstance(bbox, dict) and all(key in bbox for key in ("x", "y", "w", "h")):
+            bbox_item = FaceBBoxItem(
+                x=int(bbox["x"]),
+                y=int(bbox["y"]),
+                w=int(bbox["w"]),
+                h=int(bbox["h"]),
+            )
+        elif isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+            bbox_item = FaceBBoxItem(
+                x=int(bbox[0]),
+                y=int(bbox[1]),
+                w=int(bbox[2]),
+                h=int(bbox[3]),
+            )
+        items.append(
+            PerFrameFaceScoreItem(
+                frameIndex=int(frame_index),
+                faceIndex=int(row.get("face_index", row.get("faceIndex", 0))),
+                riskScore=round(float(score), 6),
+                bbox=bbox_item,
+            )
+        )
+    return items
+
+
+def _no_human_face_response(
+    *,
+    analysis_request_id: int,
+    evidence_id: int,
+    modules: list[str],
+    frames_sampled: int | None = None,
+) -> AnalysisResponseMessage:
+    detail = f" sampled_frames={frames_sampled}" if frames_sampled is not None else ""
+    return AnalysisResponseMessage(
+        analysisRequestId=analysis_request_id,
+        evidenceId=evidence_id,
+        status="FAILED",
+        analyzedAt=_utc_now(),
+        errorCode="NO_HUMAN_FACE",
+        message=(
+            "사람 얼굴이 검출되지 않아 딥페이크 판별을 수행할 수 없습니다."
+            f" (modules={','.join(modules)}{detail})"
+        ),
+    )
+
+
 def build_analysis_response(
     *,
     analysis_request_id: int,
@@ -247,7 +306,27 @@ def build_analysis_response(
     fps = _video_fps(video_path)
 
     cnn = run_xception_module(video_path, cfg, threshold=thresholds["cnn"], fps=fps)
+    cnn_status = str((cnn.raw or {}).get("status", "ok"))
+    if cnn_status in NO_FACE_STATUSES or (cnn.raw or {}).get("fake_score") is None:
+        breakdown = (cnn.raw or {}).get("score_breakdown") or {}
+        return _no_human_face_response(
+            analysis_request_id=analysis_request_id,
+            evidence_id=evidence_id,
+            modules=["cnn"],
+            frames_sampled=breakdown.get("frames_sampled"),
+        )
+
     temporal = run_timesformer_module(video_path, cfg, threshold=thresholds["temporal"], fps=fps)
+    temporal_status = str((temporal.raw or {}).get("status", "ok"))
+    if temporal_status in NO_FACE_STATUSES or (temporal.raw or {}).get("fake_score") is None:
+        breakdown = (temporal.raw or {}).get("score_breakdown") or {}
+        return _no_human_face_response(
+            analysis_request_id=analysis_request_id,
+            evidence_id=evidence_id,
+            modules=["cnn", "temporal"],
+            frames_sampled=breakdown.get("frames_sampled"),
+        )
+
     optical = run_gmflow_module(video_path, cfg, threshold=thresholds["optical"], fps=fps)
     modules = {"cnn": cnn, "temporal": temporal, "optical": optical}
 
@@ -345,6 +424,9 @@ def build_analysis_response(
         modelScores=model_scores,
         representativeFrames=representative_frames,
         overlayVideoUrl=overlay_video_url,
+        perFrameFaceScores=_to_per_frame_face_score_items(fused_visualization_scores)
+        if fused_visualization_scores
+        else None,
     )
 
     return AnalysisResponseMessage(

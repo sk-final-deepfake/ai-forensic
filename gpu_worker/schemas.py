@@ -84,6 +84,20 @@ class RepresentativeFrameItem(BaseModel):
     imageUrl: str | None = None
 
 
+class FaceBBoxItem(BaseModel):
+    x: int
+    y: int
+    w: int
+    h: int
+
+
+class PerFrameFaceScoreItem(BaseModel):
+    frameIndex: int
+    faceIndex: int = 0
+    riskScore: float
+    bbox: FaceBBoxItem | None = None
+
+
 class AnalysisVideoResultItem(BaseModel):
     type: Literal["video"] = "video"
     modelName: str | None = None
@@ -108,6 +122,7 @@ class AnalysisVideoResultItem(BaseModel):
     modelScores: list[ModelScoreItem] | None = None
     representativeFrames: list[RepresentativeFrameItem] | None = None
     overlayVideoUrl: str | None = None
+    perFrameFaceScores: list[PerFrameFaceScoreItem] | None = None
 
 
 class AnalysisResponseMessage(BaseModel):

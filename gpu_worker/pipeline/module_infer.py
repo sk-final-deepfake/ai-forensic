@@ -13,6 +13,8 @@ from gpu_worker.pipeline.paths import resolve_under_root, setup_script_paths
 
 logger = logging.getLogger("gpu_worker.pipeline.module_infer")
 
+NO_FACE_STATUSES = frozenset({"no_face", "no_human_face", "skipped_no_human_face"})
+
 
 @dataclass(frozen=True)
 class ModuleRunResult:
@@ -129,8 +131,23 @@ def run_xception_module(video_path: Path, cfg: WorkerConfig, *, threshold: float
         )
     finally:
         face_cropper.close()
-    if result.get("status") != "ok" or result.get("fake_score") is None:
-        raise RuntimeError(f"Xception inference failed: status={result.get('status')}")
+    if result.get("status") in NO_FACE_STATUSES or result.get("fake_score") is None:
+        return ModuleRunResult(
+            module="cnn",
+            model_name="Xception",
+            model_version=cfg.model_version or "v1.0.0-celeb1k",
+            video_score=0.0,
+            threshold=threshold,
+            detected=False,
+            confidence=0.0,
+            frame_risks=[],
+            clip_risks=[],
+            pair_risks=[],
+            suspicious_segments=[],
+            temporal_suspicious_segments=[],
+            optical_suspicious_segments=[],
+            raw=result,
+        )
 
     breakdown = result.get("score_breakdown") or {}
     aggregate = breakdown.get("aggregate") or {}
@@ -181,7 +198,13 @@ def run_timesformer_module(video_path: Path, cfg: WorkerConfig, *, threshold: fl
 
     device = torch.device("cuda" if cfg.device.lower().startswith("cuda") and torch.cuda.is_available() else "cpu")
     model = load_model(weights, device)
-    face_cropper = create_face_cropper(method="yunet", padding=0.3, square=True, human_only=True)
+    face_cropper = create_face_cropper(
+        method="yunet",
+        padding=0.3,
+        square=True,
+        human_only=True,
+        size=CLIP_SIZE,
+    )
     try:
         result = infer_video_clip_model(
             model,
@@ -197,10 +220,34 @@ def run_timesformer_module(video_path: Path, cfg: WorkerConfig, *, threshold: fl
             face_cropper=face_cropper,
             aggregate="max",
         )
+    except RuntimeError as exc:
+        logger.exception("TimeSformer inference failed for %s", video_path.name)
+        result = {
+            "file": video_path.name,
+            "status": "error",
+            "fake_score": None,
+            "pred_label": None,
+            "score_breakdown": {"message": str(exc)},
+        }
     finally:
         face_cropper.close()
-    if result.get("status") != "ok" or result.get("fake_score") is None:
-        raise RuntimeError(f"TimeSformer inference failed: status={result.get('status')}")
+    if result.get("status") in NO_FACE_STATUSES or result.get("fake_score") is None:
+        return ModuleRunResult(
+            module="temporal",
+            model_name="TimeSformer",
+            model_version="v1.0.0-celeb1k",
+            video_score=0.0,
+            threshold=threshold,
+            detected=False,
+            confidence=0.0,
+            frame_risks=[],
+            clip_risks=[],
+            pair_risks=[],
+            suspicious_segments=[],
+            temporal_suspicious_segments=[],
+            optical_suspicious_segments=[],
+            raw=result,
+        )
 
     breakdown = result.get("score_breakdown") or {}
     aggregate = breakdown.get("aggregate") or {}

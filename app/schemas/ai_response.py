@@ -72,6 +72,20 @@ class RepresentativeFrameItem(BaseModel):
     imageUrl: str | None = None
 
 
+class FaceBBoxItem(BaseModel):
+    x: int
+    y: int
+    w: int
+    h: int
+
+
+class PerFrameFaceScoreItem(BaseModel):
+    frameIndex: int
+    faceIndex: int = 0
+    riskScore: float
+    bbox: FaceBBoxItem | None = None
+
+
 class AnalysisVideoResultItem(BaseModel):
     type: Literal["video"] = "video"
     lipSyncDetected: bool = False
@@ -97,6 +111,7 @@ class AnalysisVideoResultItem(BaseModel):
     evidence: list[str] = Field(default_factory=list)
     representativeFrames: list[RepresentativeFrameItem] = Field(default_factory=list)
     overlayVideoUrl: str | None = None
+    perFrameFaceScores: list[PerFrameFaceScoreItem] | None = None
 
 
 class AnalysisResponseMessage(BaseModel):

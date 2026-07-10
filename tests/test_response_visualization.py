@@ -8,11 +8,14 @@ from app.schemas.messaging import (
     AnalysisJobMessage,
     AnalysisResponseMessage,
     AnalysisVideoResultItem,
+    FaceBBoxItem,
     FrameRiskItem,
+    PerFrameFaceScoreItem,
 )
 from app.services.response_visualization import (
     attach_visualization_artifacts,
     build_visualization_payload,
+    per_frame_face_scores_from_video_item,
     per_frame_scores_from_cnn_raw,
     per_frame_scores_from_video_item,
 )
@@ -44,6 +47,40 @@ class ResponseVisualizationTests(unittest.TestCase):
         rows = per_frame_scores_from_video_item(video)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["frame_index"], 5)
+
+    def test_per_frame_scores_from_video_item_prefers_face_scores(self) -> None:
+        video = AnalysisVideoResultItem(
+            frameRisks=[
+                FrameRiskItem(frameIndex=10, timestampSec=0.4, riskScore=0.9),
+            ],
+            perFrameFaceScores=[
+                PerFrameFaceScoreItem(
+                    frameIndex=10,
+                    faceIndex=0,
+                    riskScore=0.4,
+                    bbox=FaceBBoxItem(x=1, y=2, w=3, h=4),
+                ),
+                PerFrameFaceScoreItem(
+                    frameIndex=10,
+                    faceIndex=1,
+                    riskScore=0.9,
+                    bbox=FaceBBoxItem(x=20, y=2, w=3, h=4),
+                ),
+            ],
+        )
+        rows = per_frame_scores_from_video_item(video)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1]["face_index"], 1)
+        self.assertEqual(rows[1]["bbox"]["x"], 20)
+
+    def test_per_frame_face_scores_from_video_item(self) -> None:
+        video = AnalysisVideoResultItem(
+            perFrameFaceScores=[
+                PerFrameFaceScoreItem(frameIndex=3, faceIndex=0, riskScore=0.5),
+            ],
+        )
+        rows = per_frame_face_scores_from_video_item(video)
+        self.assertEqual(rows[0]["frame_index"], 3)
 
     def test_attach_visualization_skips_when_already_present(self) -> None:
         job = AnalysisJobMessage(

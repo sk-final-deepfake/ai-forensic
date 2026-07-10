@@ -108,6 +108,7 @@ def _pair_segments(pair_risks: list[dict[str, Any]], threshold: float) -> list[d
 
 def run_xception_module(video_path: Path, cfg: WorkerConfig, *, threshold: float, fps: float) -> ModuleRunResult:
     setup_script_paths(cfg)
+    from face_crop import create_face_cropper  # type: ignore
     from video_xception_infer import infer_video, load_model  # type: ignore
 
     weights = _resolve_xception_weights(cfg)
@@ -116,8 +117,18 @@ def run_xception_module(video_path: Path, cfg: WorkerConfig, *, threshold: float
 
     device = torch.device("cuda" if cfg.device.lower().startswith("cuda") and torch.cuda.is_available() else "cpu")
     model = load_model(weights, device)
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-    result = infer_video(model, video_path, face_cascade, device, threshold=threshold)
+    face_cropper = create_face_cropper(method="yunet", padding=0.3, square=True, human_only=True)
+    try:
+        result = infer_video(
+            model,
+            video_path,
+            face_cropper,
+            device,
+            threshold=threshold,
+            aggregate="max",
+        )
+    finally:
+        face_cropper.close()
     if result.get("status") != "ok" or result.get("fake_score") is None:
         raise RuntimeError(f"Xception inference failed: status={result.get('status')}")
 

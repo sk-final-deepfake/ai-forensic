@@ -48,11 +48,63 @@ def _risk_colormap_bgr(risk: float) -> tuple[int, int, int]:
     return int(color[0]), int(color[1]), int(color[2])
 
 
-def _face_bbox_on_frame(cropper: Any, frame: np.ndarray) -> tuple[int, int, int, int] | None:
+def _face_bboxes_on_frame(cropper: Any, frame: np.ndarray) -> list[tuple[int, int, int, int]]:
+    if hasattr(cropper, "detect_all_human_face_bboxes"):
+        return list(cropper.detect_all_human_face_bboxes(frame))
     if hasattr(cropper, "detect_human_face_bbox"):
-        return cropper.detect_human_face_bbox(frame)
+        bbox = cropper.detect_human_face_bbox(frame)
+        return [bbox] if bbox is not None else []
+    return []
+
+
+def _bbox_from_row(row: dict[str, Any]) -> tuple[int, int, int, int] | None:
+    bbox = row.get("bbox")
+    if isinstance(bbox, dict):
+        keys = ("x", "y", "w", "h")
+        if all(key in bbox for key in keys):
+            return int(bbox["x"]), int(bbox["y"]), int(bbox["w"]), int(bbox["h"])
     return None
 
+
+def _score_map_by_frame(per_frame_scores: list[dict[str, Any]]) -> dict[int, list[dict[str, Any]]]:
+    mapping: dict[int, list[dict[str, Any]]] = {}
+    for row in per_frame_scores:
+        frame_index = row.get("frame_index")
+        score = row.get("fake_score", row.get("prob_fake"))
+        if frame_index is None or score is None:
+            continue
+        mapping.setdefault(int(frame_index), []).append(
+            {
+                "score": float(score),
+                "bbox": _bbox_from_row(row),
+                "face_index": int(row.get("face_index", 0)),
+            }
+        )
+    for faces in mapping.values():
+        faces.sort(key=lambda item: item["face_index"])
+    return mapping
+
+
+def _score_map(per_frame_scores: list[dict[str, Any]]) -> dict[int, float]:
+    mapping: dict[int, float] = {}
+    for frame_index, faces in _score_map_by_frame(per_frame_scores).items():
+        mapping[frame_index] = max(face["score"] for face in faces)
+    return mapping
+
+
+def _draw_faces_overlay(frame: np.ndarray, faces: list[dict[str, Any]], cropper: Any) -> np.ndarray:
+    output = frame
+    for face in faces:
+        bbox = face.get("bbox")
+        if bbox is None:
+            detected = _face_bboxes_on_frame(cropper, frame)
+            face_index = int(face.get("face_index", 0))
+            if face_index < len(detected):
+                bbox = detected[face_index]
+        if bbox is None:
+            continue
+        output = _draw_face_overlay(output, bbox, float(face["score"]))
+    return output
 
 def _render_heatmap_layer(
     frame_shape: tuple[int, ...],
@@ -91,17 +143,6 @@ def _read_frame_at_index(video_path: Path, frame_index: int) -> tuple[np.ndarray
     if not ok or frame is None:
         return None, 0.0
     return frame, frame_index / fps if fps > 0 else 0.0
-
-
-def _score_map(per_frame_scores: list[dict[str, Any]]) -> dict[int, float]:
-    mapping: dict[int, float] = {}
-    for row in per_frame_scores:
-        frame_index = row.get("frame_index")
-        score = row.get("fake_score", row.get("prob_fake"))
-        if frame_index is None or score is None:
-            continue
-        mapping[int(frame_index)] = float(score)
-    return mapping
 
 
 def _pick_representative_rows(per_frame_scores: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
@@ -151,7 +192,12 @@ def build_visualization_artifacts(
             frame, time_sec = _read_frame_at_index(video_path, frame_index)
             if frame is None:
                 continue
-            bbox = _face_bbox_on_frame(cropper, frame)
+            bbox = _bbox_from_row(row)
+            if bbox is None:
+                detected = _face_bboxes_on_frame(cropper, frame)
+                face_index = int(row.get("face_index", 0))
+                if face_index < len(detected):
+                    bbox = detected[face_index]
             if bbox is None:
                 continue
 
@@ -189,7 +235,7 @@ def build_visualization_artifacts(
         heatmap_image_url = representative_frames[0]["heatmapUrl"] if representative_frames else None
         overlay_video_url = _build_overlay_video(
             video_path=video_path,
-            score_by_frame=_score_map(per_frame_scores),
+            faces_by_frame=_score_map_by_frame(per_frame_scores),
             cropper=cropper,
             work_dir=work_dir,
             evidence_id=evidence_id,
@@ -211,7 +257,7 @@ def build_visualization_artifacts(
 def _build_overlay_video(
     *,
     video_path: Path,
-    score_by_frame: dict[int, float],
+    faces_by_frame: dict[int, list[dict[str, Any]]],
     cropper: Any,
     work_dir: Path,
     evidence_id: int,
@@ -249,11 +295,9 @@ def _build_overlay_video(
             ok, frame = cap.read()
             if not ok or frame is None:
                 break
-            risk = score_by_frame.get(frame_index)
-            if risk is not None:
-                bbox = _face_bbox_on_frame(cropper, frame)
-                if bbox is not None:
-                    frame = _draw_face_overlay(frame, bbox, risk)
+            faces = faces_by_frame.get(frame_index)
+            if faces:
+                frame = _draw_faces_overlay(frame, faces, cropper)
             writer.write(frame)
             frame_index += 1
     finally:

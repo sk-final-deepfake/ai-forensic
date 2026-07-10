@@ -112,7 +112,7 @@ class InferRuntime:
             self.device,
             threshold=self.fusion_config.module_thresholds["cnn"],
             num_frames=32,
-            aggregate="topk",
+            aggregate="max",
             top_k=5,
         )
         breakdown = result.get("score_breakdown") or {}

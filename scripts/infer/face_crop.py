@@ -204,17 +204,100 @@ class FaceCropper:
             self._yunet.setInputSize(size)
         return self._yunet
 
+    def detect_all_human_face_bboxes(self, frame: np.ndarray) -> list[tuple[int, int, int, int]]:
+        """Return all human face bboxes as (x, y, w, h), largest first."""
+        if self.config.method == "yunet":
+            return self._detect_all_yunet(frame)
+        if self.config.method == "mediapipe":
+            return self._detect_all_mediapipe(frame)
+        return self._detect_all_haar(frame)
+
     def detect_human_face_bbox(self, frame: np.ndarray) -> tuple[int, int, int, int] | None:
         """Return (x, y, w, h) for the largest human face, or None."""
-        if self.config.method != "yunet":
-            return None
+        bboxes = self.detect_all_human_face_bboxes(frame)
+        return bboxes[0] if bboxes else None
+
+    def _detect_all_yunet(self, frame: np.ndarray) -> list[tuple[int, int, int, int]]:
         h_img, w_img = frame.shape[:2]
         detector = self._yunet_detector(w_img, h_img)
         _, faces = detector.detect(frame)
         if faces is None or len(faces) == 0:
-            return None
-        best = max(faces, key=lambda f: float(f[2]) * float(f[3]))
-        return int(best[0]), int(best[1]), int(best[2]), int(best[3])
+            return []
+        ordered = sorted(
+            faces,
+            key=lambda f: float(f[2]) * float(f[3]),
+            reverse=True,
+        )
+        return [
+            (int(face[0]), int(face[1]), int(face[2]), int(face[3]))
+            for face in ordered
+        ]
+
+    def _detect_all_haar(self, frame: np.ndarray) -> list[tuple[int, int, int, int]]:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = self._haar_cascade().detectMultiScale(
+            gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60)
+        )
+        if len(faces) == 0:
+            return []
+        ordered = sorted(faces, key=lambda b: b[2] * b[3], reverse=True)
+        return [(int(x), int(y), int(w), int(h)) for x, y, w, h in ordered]
+
+    def _detect_all_mediapipe(self, frame: np.ndarray) -> list[tuple[int, int, int, int]]:
+        h_img, w_img = frame.shape[:2]
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        detector = self._mp_face_detector()
+        bboxes: list[tuple[int, int, int, int]] = []
+
+        if getattr(self, "_mp_api", None) == "tasks":
+            mp = self._mp_image_module
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            results = detector.detect(mp_image)
+            for detection in results.detections or []:
+                box = detection.bounding_box
+                bboxes.append((int(box.origin_x), int(box.origin_y), int(box.width), int(box.height)))
+        else:
+            results = detector.process(rgb)
+            for detection in results.detections or []:
+                box = detection.location_data.relative_bounding_box
+                bboxes.append(
+                    (
+                        int(box.xmin * w_img),
+                        int(box.ymin * h_img),
+                        int(box.width * w_img),
+                        int(box.height * h_img),
+                    )
+                )
+
+        return sorted(bboxes, key=lambda b: b[2] * b[3], reverse=True)
+
+    def crop_from_bbox(self, frame: np.ndarray, bbox: tuple[int, int, int, int]) -> np.ndarray | None:
+        x, y, w, h = bbox
+        h_img, w_img = frame.shape[:2]
+        x1, y1, x2, y2 = _apply_padding_square(
+            x, y, w, h,
+            padding=self.config.padding,
+            square=self.config.square,
+            h_img=h_img,
+            w_img=w_img,
+        )
+        return _resize_crop(frame, x1, y1, x2, y2, self.config.size)
+
+    def crop_all(self, frame: np.ndarray) -> list[dict[str, Any]]:
+        """Return a crop entry for every detected face in the frame."""
+        entries: list[dict[str, Any]] = []
+        for face_index, bbox in enumerate(self.detect_all_human_face_bboxes(frame)):
+            crop = self.crop_from_bbox(frame, bbox)
+            if crop is None:
+                continue
+            entries.append(
+                {
+                    "face_index": face_index,
+                    "bbox": bbox,
+                    "crop": crop,
+                }
+            )
+        return entries
 
     def __enter__(self) -> FaceCropper:
         return self
@@ -233,80 +316,19 @@ class FaceCropper:
         bbox = self.detect_human_face_bbox(frame)
         if bbox is None:
             return None
-        x, y, w, h = bbox
-        h_img, w_img = frame.shape[:2]
-        x1, y1, x2, y2 = _apply_padding_square(
-            x, y, w, h,
-            padding=self.config.padding,
-            square=self.config.square,
-            h_img=h_img,
-            w_img=w_img,
-        )
-        return _resize_crop(frame, x1, y1, x2, y2, self.config.size)
+        return self.crop_from_bbox(frame, bbox)
 
     def _crop_haar(self, frame: np.ndarray) -> np.ndarray | None:
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = self._haar_cascade().detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60)
-        )
-        if len(faces) == 0:
+        bboxes = self._detect_all_haar(frame)
+        if not bboxes:
             return None
-        x, y, w, h = max(faces, key=lambda b: b[2] * b[3])
-        h_img, w_img = frame.shape[:2]
-        x1, y1, x2, y2 = _apply_padding_square(
-            int(x), int(y), int(w), int(h),
-            padding=self.config.padding,
-            square=self.config.square,
-            h_img=h_img,
-            w_img=w_img,
-        )
-        return _resize_crop(frame, x1, y1, x2, y2, self.config.size)
+        return self.crop_from_bbox(frame, bboxes[0])
 
     def _crop_mediapipe(self, frame: np.ndarray) -> np.ndarray | None:
-        h_img, w_img = frame.shape[:2]
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        detector = self._mp_face_detector()
-
-        if getattr(self, "_mp_api", None) == "tasks":
-            mp = self._mp_image_module
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-            results = detector.detect(mp_image)
-            if not results.detections:
-                return None
-            best = max(
-                results.detections,
-                key=lambda d: float(d.bounding_box.width * d.bounding_box.height),
-            )
-            box = best.bounding_box
-            x = int(box.origin_x)
-            y = int(box.origin_y)
-            w = int(box.width)
-            h = int(box.height)
-        else:
-            results = detector.process(rgb)
-            if not results.detections:
-                return None
-            best = max(
-                results.detections,
-                key=lambda d: float(
-                    d.location_data.relative_bounding_box.width
-                    * d.location_data.relative_bounding_box.height
-                ),
-            )
-            box = best.location_data.relative_bounding_box
-            x = int(box.xmin * w_img)
-            y = int(box.ymin * h_img)
-            w = int(box.width * w_img)
-            h = int(box.height * h_img)
-
-        x1, y1, x2, y2 = _apply_padding_square(
-            x, y, w, h,
-            padding=self.config.padding,
-            square=self.config.square,
-            h_img=h_img,
-            w_img=w_img,
-        )
-        return _resize_crop(frame, x1, y1, x2, y2, self.config.size)
+        bboxes = self._detect_all_mediapipe(frame)
+        if not bboxes:
+            return None
+        return self.crop_from_bbox(frame, bboxes[0])
 
     def to_metadata(self) -> dict[str, Any]:
         return {
@@ -318,6 +340,7 @@ class FaceCropper:
             "face_gate": "human_yunet" if self.config.method == "yunet" else self.config.method,
             "yunet_score_threshold": self.config.yunet_score_threshold,
             "min_sample_faces": self.config.min_sample_faces,
+            "multi_face": True,
         }
 
 

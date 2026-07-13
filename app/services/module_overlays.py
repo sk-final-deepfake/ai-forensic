@@ -74,6 +74,8 @@ def build_module_overlay_set(
         square=True,
         human_only=True,
         yunet_score_threshold=_overlay_yunet_threshold(),
+        # Overlay draws every YuNet hit; inference quality gate (48px) does not apply here.
+        min_face_side_px=1,
     )
 
     urls: dict[str, str | None] = {"cnn": None, "temporal": None, "optical": None}

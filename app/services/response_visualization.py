@@ -155,7 +155,22 @@ def download_messaging_job_video(job: AnalysisJobMessage, dest_dir: Path) -> Pat
 def _video_item_has_visualization(video: AnalysisVideoResultItem) -> bool:
     if video.overlayVideoUrl:
         return True
+    artifacts = video.modelOverlayArtifacts or []
+    if any(artifact.overlayVideoUrl for artifact in artifacts):
+        return True
     return bool(video.representativeFrames)
+
+
+def _gpu_already_provided_module_overlays(video: AnalysisVideoResultItem) -> bool:
+    """GPU gateway may attach per-module MP4s; do not replace with legacy CNN-only overlay."""
+    artifacts = video.modelOverlayArtifacts or []
+    if any((artifact.overlayVideoUrl or "").strip() for artifact in artifacts):
+        return True
+    timelines = video.moduleTimelines or []
+    return any(
+        timeline.module in ("temporal", "optical") and (timeline.overlayVideoUrl or "").strip()
+        for timeline in timelines
+    )
 
 
 def _apply_visualization_payload(
@@ -181,6 +196,14 @@ def attach_visualization_artifacts(
         return response
 
     video = response.results[0]
+    if _gpu_already_provided_module_overlays(video):
+        logger.info(
+            "Visualization skipped: GPU module overlays present analysisRequestId=%s evidenceId=%s",
+            job.analysisRequestId,
+            job.evidenceId,
+        )
+        return response
+
     has_face_scores = bool(video.perFrameFaceScores)
     if _video_item_has_visualization(video) and not has_face_scores:
         return response

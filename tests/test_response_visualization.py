@@ -10,6 +10,7 @@ from app.schemas.messaging import (
     AnalysisVideoResultItem,
     FaceBBoxItem,
     FrameRiskItem,
+    ModelOverlayArtifactItem,
     PerFrameFaceScoreItem,
 )
 from app.services.response_visualization import (
@@ -103,6 +104,63 @@ class ResponseVisualizationTests(unittest.TestCase):
         )
         updated = attach_visualization_artifacts(job, response)
         self.assertEqual(updated.results[0].overlayVideoUrl, "https://cdn.example/overlay.mp4")
+
+    @patch("app.services.response_visualization.build_visualization_payload")
+    @patch("app.services.response_visualization.download_messaging_job_video")
+    def test_attach_visualization_skips_when_gpu_model_overlays_present(
+        self,
+        mock_download: unittest.mock.Mock,
+        mock_payload: unittest.mock.Mock,
+    ) -> None:
+        job = AnalysisJobMessage(
+            analysisRequestId=99,
+            evidenceId=203,
+            filePath="evidence.mp4",
+        )
+        response = AnalysisResponseMessage(
+            analysisRequestId=99,
+            evidenceId=203,
+            status="COMPLETED",
+            analyzedAt="2026-07-10T00:00:00Z",
+            results=[
+                AnalysisVideoResultItem(
+                    deepfakeDetected=True,
+                    deepfakeScore=0.8,
+                    perFrameFaceScores=[
+                        PerFrameFaceScoreItem(frameIndex=1, faceIndex=0, riskScore=0.5),
+                    ],
+                    modelOverlayArtifacts=[
+                        ModelOverlayArtifactItem(
+                            key="deepfake:cnn",
+                            category="deepfake",
+                            label="Xception",
+                            overlayVideoUrl="https://cdn.example/cnn.mp4",
+                            status="ready",
+                        ),
+                        ModelOverlayArtifactItem(
+                            key="deepfake:temporal",
+                            category="deepfake",
+                            label="TimeSformer",
+                            overlayVideoUrl="https://cdn.example/temporal.mp4",
+                            status="ready",
+                        ),
+                        ModelOverlayArtifactItem(
+                            key="deepfake:optical",
+                            category="deepfake",
+                            label="GMFlow",
+                            overlayVideoUrl="https://cdn.example/optical.mp4",
+                            status="ready",
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        updated = attach_visualization_artifacts(job, response)
+        video = updated.results[0]
+        self.assertEqual(video.modelOverlayArtifacts[1].overlayVideoUrl, "https://cdn.example/temporal.mp4")
+        mock_download.assert_not_called()
+        mock_payload.assert_not_called()
 
     @patch("app.services.response_visualization.build_visualization_payload")
     @patch("app.services.response_visualization.download_messaging_job_video")

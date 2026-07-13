@@ -8,12 +8,14 @@ from gpu_worker.config import WorkerConfig
 
 def setup_script_paths(cfg: WorkerConfig) -> Path:
     """deepfake infer + project eval scripts를 import path에 추가."""
+    # FORENSHIELD_AI_ROOT(deepfake) 쪽 infer에 backends/ 가 있음. DEEPFAKE_ROOT(git)는 코드만.
     candidates = [
-        cfg.deepfake_root / "scripts" / "infer",
-        cfg.deepfake_root / "scripts" / "eval",
         cfg.project_root / "scripts" / "infer",
         cfg.project_root / "scripts" / "eval",
-        cfg.project_root / "deepfake" / "scripts" / "infer",
+        cfg.project_root.parent / "scripts" / "infer",
+        cfg.project_root.parent / "scripts" / "eval",
+        cfg.deepfake_root / "scripts" / "infer",
+        cfg.deepfake_root / "scripts" / "eval",
     ]
     for path in candidates:
         if path.is_dir():

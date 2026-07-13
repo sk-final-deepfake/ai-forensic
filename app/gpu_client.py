@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
+from typing import Any
 
 import httpx
 
@@ -13,6 +15,62 @@ from app.schemas.messaging import (
     AnalysisVideoResultItem,
     FrameRiskItem,
 )
+
+
+def _coerce_score(value: Any) -> float:
+    if value is None:
+        return 0.0
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if math.isnan(parsed) or math.isinf(parsed):
+        return 0.0
+    return parsed
+
+
+def _sanitize_model_score_item(item: dict[str, Any]) -> dict[str, Any]:
+    out = dict(item)
+    out["score"] = _coerce_score(out.get("score"))
+    return out
+
+
+def _sanitize_module_timeline_item(item: dict[str, Any]) -> dict[str, Any]:
+    out = dict(item)
+    out["videoScore"] = _coerce_score(out.get("videoScore"))
+    if out.get("threshold") is None:
+        out["threshold"] = 0.5
+    else:
+        out["threshold"] = _coerce_score(out.get("threshold"))
+    return out
+
+
+def _sanitize_gateway_response(data: dict[str, Any]) -> dict[str, Any]:
+    """GPU may return null module scores when TimeSformer/GMFlow soft-fail."""
+    out = dict(data)
+    if isinstance(out.get("modelScores"), list):
+        out["modelScores"] = [_sanitize_model_score_item(row) for row in out["modelScores"] if isinstance(row, dict)]
+    results = out.get("results")
+    if isinstance(results, list):
+        sanitized_results: list[Any] = []
+        for item in results:
+            if not isinstance(item, dict):
+                sanitized_results.append(item)
+                continue
+            row = dict(item)
+            if isinstance(row.get("modelScores"), list):
+                row["modelScores"] = [
+                    _sanitize_model_score_item(score) for score in row["modelScores"] if isinstance(score, dict)
+                ]
+            if isinstance(row.get("moduleTimelines"), list):
+                row["moduleTimelines"] = [
+                    _sanitize_module_timeline_item(timeline)
+                    for timeline in row["moduleTimelines"]
+                    if isinstance(timeline, dict)
+                ]
+            sanitized_results.append(row)
+        out["results"] = sanitized_results
+    return out
 
 
 def _utc_now() -> str:
@@ -75,7 +133,7 @@ def call_gpu_gateway(job: AnalysisJobMessage, settings: Settings) -> AnalysisRes
         data = response.json()
 
     if data.get("status") in ("COMPLETED", "FAILED") and "analysisRequestId" in data:
-        return AnalysisResponseMessage.model_validate(data)
+        return AnalysisResponseMessage.model_validate(_sanitize_gateway_response(data))
 
     if data.get("status") == "FAILED":
         return AnalysisResponseMessage(

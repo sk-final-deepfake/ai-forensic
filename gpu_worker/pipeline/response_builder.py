@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,20 @@ from gpu_worker.schemas import (
 )
 
 logger = logging.getLogger("gpu_worker.pipeline.response_builder")
+
+
+def _safe_score(value: float | int | None) -> float:
+    """Never emit null/NaN module scores — EKS consumer Pydantic rejects them."""
+    if value is None:
+        return 0.0
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if math.isnan(parsed) or math.isinf(parsed):
+        return 0.0
+    return parsed
+
 
 NO_FACE_STATUSES = frozenset({"no_face", "no_human_face", "skipped_no_human_face"})
 FACE_QUALITY_STATUSES = frozenset({"face_too_small", "insufficient_face_samples"})
@@ -222,7 +237,7 @@ def _build_model_scores(
             ModelScoreItem(
                 moduleName=module_name,
                 detected=module.detected,
-                score=module.video_score,
+                score=_safe_score(module.video_score),
                 modelName=str(meta.get("modelName", module.model_name)),
                 modelVersion=str(meta.get("modelVersion", module.model_version)),
             )
@@ -240,8 +255,8 @@ def _build_module_timelines(modules: dict[str, ModuleRunResult], config: dict[st
                 module=module.module,
                 modelName=str(meta.get("modelName", module.model_name)),
                 modelVersion=str(meta.get("modelVersion", module.model_version)),
-                videoScore=module.video_score,
-                threshold=module.threshold,
+                videoScore=_safe_score(module.video_score),
+                threshold=_safe_score(module.threshold),
                 detected=module.detected,
                 frameRisks=_to_frame_risks(module.frame_risks) or None,
                 clipRisks=_to_clip_risks(module.clip_risks) or None,

@@ -330,9 +330,11 @@ def run_gmflow_module(video_path: Path, cfg: WorkerConfig, *, threshold: float, 
 
     device = torch.device("cuda" if cfg.device.lower().startswith("cuda") and torch.cuda.is_available() else "cpu")
     backend_root = cfg.deepfake_root
-    if not (backend_root / "vendor/optical-flow/gmflow").is_dir():
-        backend_root = cfg.project_root
-    backend = GmflowBackend(backend_root, str(device))
+    for candidate in (cfg.deepfake_root, cfg.project_root, cfg.project_root.parent):
+        if (candidate / "vendor/optical-flow/gmflow").is_dir():
+            backend_root = candidate
+            break
+    backend = GmflowBackend(backend_root, device)
     preferred = resolve_under_root(cfg, cfg.gmflow_pretrained)
     if preferred.is_file():
         backend.weights = preferred
@@ -350,7 +352,11 @@ def run_gmflow_module(video_path: Path, cfg: WorkerConfig, *, threshold: float, 
     if infer_result.get("status") != "ok":
         raise RuntimeError(f"GMFlow inference failed: status={infer_result.get('status')}")
 
-    scorer, meta = load_scoring_config(cfg.deepfake_root)
+    scorer_root = cfg.project_root
+    meta_path = scorer_root / "models/test/video/optical-flow/gmflow/v1.0.0/gmflow_best.meta.json"
+    if not meta_path.is_file():
+        scorer_root = cfg.deepfake_root
+    scorer, meta = load_scoring_config(scorer_root)
     video_score = fake_score_from_report(infer_result, scorer, meta)
     if video_score is None:
         raise RuntimeError("GMFlow learned head could not score video")

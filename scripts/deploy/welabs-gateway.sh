@@ -9,7 +9,7 @@ VENV="${VENV:-/home/sk4team/forenShield-ai/.venv}"
 LOG_DIR="${LOG_DIR:-/home/sk4team/forenShield-ai/logs}"
 GW_LOG="${GW_LOG:-${LOG_DIR}/gpu_gateway.log}"
 GPU_ENV="${AI_REPO}/gpu_worker/.env"
-BRANCH="${BRANCH:-feature/ai-multi-face-infer}"
+BRANCH="${BRANCH:-feature/ai-module-overlays}"
 
 echo "==> Fetch ${BRANCH} in ${AI_REPO}"
 cd "${AI_REPO}"

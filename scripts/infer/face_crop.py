@@ -22,6 +22,10 @@ _YUNET_MODEL_URL = (
     "face_detection_yunet_2023mar.onnx"
 )
 NO_HUMAN_FACE_STATUS = "no_human_face"
+FACE_TOO_SMALL_STATUS = "face_too_small"
+INSUFFICIENT_FACE_SAMPLES_STATUS = "insufficient_face_samples"
+# Reject crops smaller than this (min side in px). ~30px full-body faces fail this gate.
+DEFAULT_MIN_FACE_SIDE_PX = 48
 
 
 def _mediapipe_model_cache_dir() -> Path:
@@ -64,6 +68,7 @@ class FaceCropConfig:
     yunet_score_threshold: float = 0.75
     yunet_nms_threshold: float = 0.3
     min_sample_faces: int = 4
+    min_face_side_px: int = DEFAULT_MIN_FACE_SIDE_PX
 
 
 def _clip_bbox(x1: int, y1: int, x2: int, y2: int, w_img: int, h_img: int) -> tuple[int, int, int, int]:
@@ -123,10 +128,43 @@ class FaceCropper:
         self._mp_image_module: Any = None
         self._yunet: cv2.FaceDetectorYN | None = None
         self._yunet_input_size: tuple[int, int] | None = None
+        self.last_detect_stats: dict[str, int] = {"raw": 0, "kept": 0, "rejected_small": 0}
 
     @property
     def method(self) -> str:
         return self.config.method
+
+    def reset_detect_stats(self) -> None:
+        self.last_detect_stats = {"raw": 0, "kept": 0, "rejected_small": 0}
+
+    def accumulate_detect_stats(self, stats: dict[str, int] | None = None) -> dict[str, int]:
+        src = stats or self.last_detect_stats
+        return {
+            "raw": int(src.get("raw", 0)),
+            "kept": int(src.get("kept", 0)),
+            "rejected_small": int(src.get("rejected_small", 0)),
+        }
+
+    def classify_empty_face_status(
+        self,
+        *,
+        unique_usable_frames: int,
+        min_faces: int,
+        raw_detections: int,
+        rejected_small: int,
+    ) -> str:
+        """Map face sampling outcomes to an explicit gate status (never overuse no_human_face)."""
+        if unique_usable_frames >= min_faces:
+            return "ok"
+        if unique_usable_frames == 0 and rejected_small > 0:
+            return FACE_TOO_SMALL_STATUS
+        if unique_usable_frames == 0 and raw_detections == 0:
+            return self.no_face_status()
+        if 0 < unique_usable_frames < min_faces:
+            if rejected_small > unique_usable_frames:
+                return FACE_TOO_SMALL_STATUS
+            return INSUFFICIENT_FACE_SAMPLES_STATUS
+        return self.no_face_status()
 
     def _haar_cascade(self) -> cv2.CascadeClassifier:
         if self._haar is None:
@@ -205,17 +243,42 @@ class FaceCropper:
         return self._yunet
 
     def detect_all_human_face_bboxes(self, frame: np.ndarray) -> list[tuple[int, int, int, int]]:
-        """Return all human face bboxes as (x, y, w, h), largest first."""
+        """Return usable human face bboxes as (x, y, w, h), largest first.
+
+        Faces smaller than ``min_face_side_px`` are rejected and counted in
+        ``last_detect_stats`` so callers can emit FACE_TOO_SMALL instead of NO_HUMAN.
+        """
         if self.config.method == "yunet":
-            return self._detect_all_yunet(frame)
-        if self.config.method == "mediapipe":
-            return self._detect_all_mediapipe(frame)
-        return self._detect_all_haar(frame)
+            raw = self._detect_all_yunet(frame)
+        elif self.config.method == "mediapipe":
+            raw = self._detect_all_mediapipe(frame)
+        else:
+            raw = self._detect_all_haar(frame)
+        return self._filter_min_face_size(raw)
 
     def detect_human_face_bbox(self, frame: np.ndarray) -> tuple[int, int, int, int] | None:
         """Return (x, y, w, h) for the largest human face, or None."""
         bboxes = self.detect_all_human_face_bboxes(frame)
         return bboxes[0] if bboxes else None
+
+    def _filter_min_face_size(
+        self, bboxes: list[tuple[int, int, int, int]]
+    ) -> list[tuple[int, int, int, int]]:
+        min_side = max(1, int(self.config.min_face_side_px))
+        kept: list[tuple[int, int, int, int]] = []
+        rejected = 0
+        for bbox in bboxes:
+            _x, _y, w, h = bbox
+            if min(int(w), int(h)) < min_side:
+                rejected += 1
+                continue
+            kept.append(bbox)
+        self.last_detect_stats = {
+            "raw": len(bboxes),
+            "kept": len(kept),
+            "rejected_small": rejected,
+        }
+        return kept
 
     def _detect_all_yunet(self, frame: np.ndarray) -> list[tuple[int, int, int, int]]:
         h_img, w_img = frame.shape[:2]
@@ -340,6 +403,7 @@ class FaceCropper:
             "face_gate": "human_yunet" if self.config.method == "yunet" else self.config.method,
             "yunet_score_threshold": self.config.yunet_score_threshold,
             "min_sample_faces": self.config.min_sample_faces,
+            "min_face_side_px": self.config.min_face_side_px,
             "multi_face": True,
         }
 
@@ -353,6 +417,7 @@ def create_face_cropper(
     human_only: bool = True,
     yunet_score_threshold: float = 0.75,
     min_sample_faces: int = 4,
+    min_face_side_px: int = DEFAULT_MIN_FACE_SIDE_PX,
 ) -> FaceCropper:
     resolved_method = method or ("yunet" if human_only else "haar")
     return FaceCropper(
@@ -364,6 +429,7 @@ def create_face_cropper(
             human_only=human_only,
             yunet_score_threshold=yunet_score_threshold,
             min_sample_faces=min_sample_faces,
+            min_face_side_px=min_face_side_px,
         )
     )
 

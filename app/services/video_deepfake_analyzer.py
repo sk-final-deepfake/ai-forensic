@@ -49,6 +49,31 @@ logger = logging.getLogger("ai_fastapi.video_deepfake_analyzer")
 
 FUSION_MODEL_NAME = "forenshield-late-fusion"
 NO_HUMAN_FACE_STATUSES = frozenset({"no_face", "no_human_face", "skipped_no_human_face"})
+FACE_QUALITY_STATUSES = frozenset({"face_too_small", "insufficient_face_samples"})
+TEMPORAL_UNAVAILABLE_STATUSES = frozenset(
+    {
+        "insufficient_face_samples",
+        "insufficient_temporal_clips",
+        "face_too_small",
+        "error",
+        "skipped",
+    }
+)
+
+SOFT_INCONCLUSIVE_MESSAGES = {
+    "NO_HUMAN_FACE": (
+        "사람 얼굴이 검출되지 않아 딥페이크 판별을 수행할 수 없습니다. "
+        "위변조 등 후속 분석은 계속 진행할 수 있습니다."
+    ),
+    "FACE_TOO_SMALL": (
+        "검출된 얼굴이 너무 작아(전신·원거리 등) 신뢰 가능한 딥페이크 판별을 보류합니다. "
+        "위변조 등 후속 분석은 계속 진행할 수 있습니다."
+    ),
+    "INSUFFICIENT_FACE_SAMPLES": (
+        "분석에 쓸 수 있는 얼굴 프레임이 부족하여 딥페이크 판별을 보류합니다. "
+        "위변조 등 후속 분석은 계속 진행할 수 있습니다."
+    ),
+}
 
 
 def _to_per_frame_face_scores(rows: list[dict[str, Any]]) -> list[PerFrameFaceScoreItem]:
@@ -145,23 +170,22 @@ def _failed_response(
     )
 
 
-def _inconclusive_no_human_face_response(
+def _inconclusive_soft_response(
     request: AnalysisRequest,
     *,
+    error_code: str,
     blocked_modules: list[str],
     frames_sampled: int | None = None,
 ) -> AnalysisResponseMessage:
     """Soft-complete so downstream forgery/integrity stages can still run."""
     detail = f" sampled_frames={frames_sampled}" if frames_sampled is not None else ""
-    message = (
-        "사람 얼굴이 검출되지 않아 딥페이크 판별을 수행할 수 없습니다. "
-        "위변조 등 후속 분석은 계속 진행할 수 있습니다."
-        f" (modules={','.join(blocked_modules)}{detail})"
+    base = SOFT_INCONCLUSIVE_MESSAGES.get(
+        error_code,
+        "딥페이크 판별을 수행할 수 없습니다. 위변조 등 후속 분석은 계속 진행할 수 있습니다.",
     )
-    reasons = [
-        "NO_HUMAN_FACE: 딥페이크 모델(얼굴 기반) 판단 불가",
-        message,
-    ]
+    message = f"{base} (modules={','.join(blocked_modules)}{detail})"
+    reasons = [f"{error_code}: 딥페이크 모델 판단 보류", message]
+    version = f"inconclusive-{error_code.lower().replace('_', '-')}"
     video_result = AnalysisVideoResultItem(
         deepfakeDetected=False,
         deepfakeScore=0.0,
@@ -173,14 +197,14 @@ def _inconclusive_no_human_face_response(
         opticalSuspiciousSegments=[],
         moduleTimelines=[],
         modelName=FUSION_MODEL_NAME,
-        modelVersion="inconclusive-no-human-face",
+        modelVersion=version,
         modelScores=[
             ModelScoreItem(
                 moduleName="deepfake",
                 detected=False,
                 score=0.0,
                 modelName=FUSION_MODEL_NAME,
-                modelVersion="inconclusive-no-human-face",
+                modelVersion=version,
             )
         ],
         evidence=reasons,
@@ -198,13 +222,50 @@ def _inconclusive_no_human_face_response(
         analysisReasons=reasons,
         results=[video_result],
         analyzedAt=_utc_now_iso(),
-        errorCode="NO_HUMAN_FACE",
+        errorCode=error_code,
         message=message,
         modelName=FUSION_MODEL_NAME,
-        modelVersion="inconclusive-no-human-face",
+        modelVersion=version,
         modelScores=video_result.modelScores,
         evidence=reasons,
     )
+
+
+def _inconclusive_no_human_face_response(
+    request: AnalysisRequest,
+    *,
+    blocked_modules: list[str],
+    frames_sampled: int | None = None,
+) -> AnalysisResponseMessage:
+    return _inconclusive_soft_response(
+        request,
+        error_code="NO_HUMAN_FACE",
+        blocked_modules=blocked_modules,
+        frames_sampled=frames_sampled,
+    )
+
+
+def _cnn_gate_error_code(status: str | None) -> str | None:
+    if status in NO_HUMAN_FACE_STATUSES:
+        return "NO_HUMAN_FACE"
+    if status == "face_too_small":
+        return "FACE_TOO_SMALL"
+    if status == "insufficient_face_samples":
+        return "INSUFFICIENT_FACE_SAMPLES"
+    return None
+
+
+def _temporal_is_unavailable(temporal: ModuleInferResult | None) -> bool:
+    if temporal is None:
+        return True
+    if temporal.fake_score is not None and temporal.status == "ok":
+        return False
+    if temporal.status in NO_HUMAN_FACE_STATUSES:
+        # CNN already passed; treat temporal "no face" as module gap, not video-level no-human.
+        return True
+    if temporal.status in TEMPORAL_UNAVAILABLE_STATUSES or temporal.fake_score is None:
+        return True
+    return False
 
 
 def _mock_module_results() -> list[ModuleInferResult]:
@@ -307,31 +368,37 @@ def build_response_from_modules(
     s_temporal = temporal.fake_score if temporal else None
     s_optical = optical.fake_score if optical and optical.fake_score is not None else 0.0
 
-    blocked_modules = [
-        m.module
-        for m in (cnn, temporal)
-        if m is not None and (m.status in NO_HUMAN_FACE_STATUSES or m.fake_score is None)
-    ]
-    if blocked_modules:
-        frames_sampled = None
-        if cnn and cnn.details:
-            frames_sampled = (cnn.details.get("score_breakdown") or {}).get("frames_sampled")
-        return _inconclusive_no_human_face_response(
-            request,
-            blocked_modules=blocked_modules,
-            frames_sampled=frames_sampled if isinstance(frames_sampled, int) else None,
-        )
+    frames_sampled = None
+    if cnn and cnn.details:
+        frames_sampled = (cnn.details.get("score_breakdown") or {}).get("frames_sampled")
+        if not isinstance(frames_sampled, int):
+            frames_sampled = None
 
-    missing = [
-        name
-        for name, score in (("cnn", s_cnn), ("temporal", s_temporal))
-        if score is None
-    ]
-    if missing:
+    cnn_gate = _cnn_gate_error_code(cnn.status if cnn else None)
+    if cnn is not None and cnn.status == "error" and s_cnn is None:
         return _failed_response(
             request,
             error_code="MODEL_INFERENCE_FAILED",
-            message=f"Required module scores missing: {', '.join(missing)}",
+            message="CNN module inference failed.",
+        )
+    if cnn is None or s_cnn is None or cnn_gate is not None:
+        error_code = cnn_gate or "NO_HUMAN_FACE"
+        return _inconclusive_soft_response(
+            request,
+            error_code=error_code,
+            blocked_modules=["cnn"],
+            frames_sampled=frames_sampled,
+        )
+
+    soft_error_code: str | None = None
+    soft_error_message: str | None = None
+    temporal_unavailable = _temporal_is_unavailable(temporal)
+    if temporal_unavailable:
+        s_temporal = 0.0
+        soft_error_code = "TEMPORAL_MODULE_UNAVAILABLE"
+        soft_error_message = (
+            "TimeSformer(시계열) 모듈을 사용할 수 없어 CNN·광학 흐름 중심으로 판별했습니다. "
+            f"(temporal_status={getattr(temporal, 'status', None)})"
         )
 
     fusion_score = fuse_scores(
@@ -350,6 +417,9 @@ def build_response_from_modules(
         fusion_detected=fusion_detected,
         config=config,
     )
+    if soft_error_message:
+        reasons = [soft_error_message, *reasons]
+
 
     per_frame = []
     temporal_per_frame: list[dict[str, Any]] = []
@@ -497,6 +567,8 @@ def build_response_from_modules(
         analysisReasons=reasons,
         results=[video_result],
         analyzedAt=_utc_now_iso(),
+        errorCode=soft_error_code,
+        message=soft_error_message,
         modelName=FUSION_MODEL_NAME,
         modelVersion=config.fusion_version,
         modelScores=model_scores,

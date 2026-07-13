@@ -14,6 +14,18 @@ from gpu_worker.pipeline.paths import resolve_under_root, setup_script_paths
 logger = logging.getLogger("gpu_worker.pipeline.module_infer")
 
 NO_FACE_STATUSES = frozenset({"no_face", "no_human_face", "skipped_no_human_face"})
+FACE_QUALITY_STATUSES = frozenset({"face_too_small", "insufficient_face_samples"})
+CNN_GATE_STATUSES = NO_FACE_STATUSES | FACE_QUALITY_STATUSES
+TEMPORAL_UNAVAILABLE_STATUSES = frozenset(
+    {
+        "insufficient_face_samples",
+        "insufficient_temporal_clips",
+        "face_too_small",
+        "error",
+        "skipped",
+        *NO_FACE_STATUSES,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -131,7 +143,7 @@ def run_xception_module(video_path: Path, cfg: WorkerConfig, *, threshold: float
         )
     finally:
         face_cropper.close()
-    if result.get("status") in NO_FACE_STATUSES or result.get("fake_score") is None:
+    if result.get("status") in CNN_GATE_STATUSES or result.get("fake_score") is None:
         return ModuleRunResult(
             module="cnn",
             model_name="Xception",
@@ -231,7 +243,7 @@ def run_timesformer_module(video_path: Path, cfg: WorkerConfig, *, threshold: fl
         }
     finally:
         face_cropper.close()
-    if result.get("status") in NO_FACE_STATUSES or result.get("fake_score") is None:
+    if result.get("status") in TEMPORAL_UNAVAILABLE_STATUSES or result.get("fake_score") is None:
         return ModuleRunResult(
             module="temporal",
             model_name="TimeSformer",

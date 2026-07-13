@@ -52,6 +52,18 @@ class ModuleTimelineItem(BaseModel):
     clipRisks: list[ClipRiskItem] = Field(default_factory=list)
     pairRisks: list[PairRiskItem] = Field(default_factory=list)
     suspiciousSegments: list[SuspiciousSegmentItem] = Field(default_factory=list)
+    overlayVideoUrl: str | None = None
+
+
+class ModelOverlayArtifactItem(BaseModel):
+    """Flat per-model overlay artifact for FE model-overlays.ts."""
+
+    key: str
+    category: Literal["deepfake", "forgery"] = "deepfake"
+    label: str
+    overlayVideoUrl: str | None = None
+    status: Literal["ready", "pending", "unsupported"] | None = "pending"
+    description: str | None = None
 
 
 class ModelScoreItem(BaseModel):
@@ -112,6 +124,7 @@ class AnalysisVideoResultItem(BaseModel):
     representativeFrames: list[RepresentativeFrameItem] = Field(default_factory=list)
     overlayVideoUrl: str | None = None
     perFrameFaceScores: list[PerFrameFaceScoreItem] | None = None
+    modelOverlayArtifacts: list[ModelOverlayArtifactItem] = Field(default_factory=list)
 
 
 class AnalysisResponseMessage(BaseModel):

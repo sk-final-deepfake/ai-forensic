@@ -78,6 +78,36 @@ def test_ambiguous_boost_for_borderline_fake() -> None:
     assert score >= 0.615
 
 
+def test_dual_module_rescue_when_cnn_misses() -> None:
+    config = _gated_config(
+        dual_module_rescue=True,
+        dual_module_ts_min=0.60,
+        dual_module_gmf_min=0.50,
+        dual_module_ts_weight=0.70,
+        dual_module_gmf_weight=0.30,
+    )
+    score, meta = fuse_scores_gated(
+        s_cnn=0.20,
+        s_temporal=0.85,
+        s_optical=0.70,
+        config=config,
+    )
+    assert meta["dual_module_rescue_active"] is True
+    assert score >= 0.70 * 0.85 + 0.30 * 0.70 - 0.01
+
+
+def test_dual_module_rescue_keeps_cnn_only_high() -> None:
+    config = _gated_config(dual_module_rescue=True)
+    score, meta = fuse_scores_gated(
+        s_cnn=0.92,
+        s_temporal=0.10,
+        s_optical=0.55,
+        config=config,
+    )
+    assert meta["dual_module_rescue_active"] is False
+    assert score >= 0.80
+
+
 def test_fuse_scores_dispatches_gated() -> None:
     config = _gated_config()
     assert fuse_scores(s_cnn=0.53, s_temporal=0.91, s_optical=0.39, config=config) > 0.5

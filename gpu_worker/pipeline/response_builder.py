@@ -5,7 +5,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.services.late_fusion import build_fused_per_frame_scores, collapse_frame_risks_by_frame
+from app.services.late_fusion import (
+    build_fused_per_frame_scores,
+    build_suspicious_segments,
+    collapse_frame_risks_by_frame,
+)
+from app.services.module_overlays import build_module_overlay_set
 from app.services.visualization_artifacts import build_visualization_artifacts
 from gpu_worker.config import WorkerConfig
 from gpu_worker.pipeline.fusion import FusionResult, apply_late_fusion, load_fusion_config
@@ -23,6 +28,7 @@ from gpu_worker.schemas import (
     ClipRiskItem,
     FaceBBoxItem,
     FrameRiskItem,
+    ModelOverlayArtifactItem,
     ModelScoreItem,
     ModuleTimelineItem,
     PairRiskItem,
@@ -34,6 +40,17 @@ from gpu_worker.schemas import (
 logger = logging.getLogger("gpu_worker.pipeline.response_builder")
 
 NO_FACE_STATUSES = frozenset({"no_face", "no_human_face", "skipped_no_human_face"})
+FACE_QUALITY_STATUSES = frozenset({"face_too_small", "insufficient_face_samples"})
+TEMPORAL_UNAVAILABLE_STATUSES = frozenset(
+    {
+        "insufficient_face_samples",
+        "insufficient_temporal_clips",
+        "face_too_small",
+        "error",
+        "skipped",
+        *NO_FACE_STATUSES,
+    }
+)
 
 
 def _utc_now() -> str:
@@ -269,6 +286,80 @@ def _to_per_frame_face_score_items(scores: list[dict[str, Any]]) -> list[PerFram
     return items
 
 
+def _soft_inconclusive_response(
+    *,
+    analysis_request_id: int,
+    evidence_id: int,
+    error_code: str,
+    modules: list[str],
+    frames_sampled: int | None = None,
+    message: str | None = None,
+) -> AnalysisResponseMessage:
+    detail = f" sampled_frames={frames_sampled}" if frames_sampled is not None else ""
+    defaults = {
+        "NO_HUMAN_FACE": (
+            "사람 얼굴이 검출되지 않아 딥페이크 판별을 수행할 수 없습니다. "
+            "위변조 등 후속 분석은 계속 진행할 수 있습니다."
+        ),
+        "FACE_TOO_SMALL": (
+            "검출된 얼굴이 너무 작아(전신·원거리 등) 신뢰 가능한 딥페이크 판별을 보류합니다. "
+            "위변조 등 후속 분석은 계속 진행할 수 있습니다."
+        ),
+        "INSUFFICIENT_FACE_SAMPLES": (
+            "분석에 쓸 수 있는 얼굴 프레임이 부족하여 딥페이크 판별을 보류합니다. "
+            "위변조 등 후속 분석은 계속 진행할 수 있습니다."
+        ),
+    }
+    base = message or defaults.get(
+        error_code,
+        "딥페이크 판별을 수행할 수 없습니다. 위변조 등 후속 분석은 계속 진행할 수 있습니다.",
+    )
+    full_message = f"{base} (modules={','.join(modules)}{detail})"
+    reasons = [f"{error_code}: 딥페이크 모델 판단 보류", full_message]
+    version = f"inconclusive-{error_code.lower().replace('_', '-')}"
+    video_item = AnalysisVideoResultItem(
+        modelName="forenshield-late-fusion",
+        modelVersion=version,
+        deepfakeDetected=False,
+        deepfakeScore=0.0,
+        frameRisks=None,
+        clipRisks=None,
+        pairRisks=None,
+        suspiciousSegments=None,
+        temporalSuspiciousSegments=None,
+        opticalSuspiciousSegments=None,
+        moduleTimelines=None,
+        modelScores=[
+            ModelScoreItem(
+                moduleName="deepfake",
+                detected=False,
+                score=0.0,
+                modelName="forenshield-late-fusion",
+                modelVersion=version,
+            )
+        ],
+        representativeFrames=None,
+        overlayVideoUrl=None,
+        perFrameFaceScores=None,
+    )
+    return AnalysisResponseMessage(
+        analysisRequestId=analysis_request_id,
+        evidenceId=evidence_id,
+        status="COMPLETED",
+        riskScore=0.0,
+        confidenceScore=0.0,
+        riskLevel="LOW",
+        analyzedAt=_utc_now(),
+        errorCode=error_code,
+        message=full_message,
+        analysisReasons=reasons,
+        results=[video_item],
+        modelScores=video_item.modelScores,
+        modelName=video_item.modelName,
+        modelVersion=video_item.modelVersion,
+    )
+
+
 def _no_human_face_response(
     *,
     analysis_request_id: int,
@@ -276,18 +367,23 @@ def _no_human_face_response(
     modules: list[str],
     frames_sampled: int | None = None,
 ) -> AnalysisResponseMessage:
-    detail = f" sampled_frames={frames_sampled}" if frames_sampled is not None else ""
-    return AnalysisResponseMessage(
-        analysisRequestId=analysis_request_id,
-        evidenceId=evidence_id,
-        status="FAILED",
-        analyzedAt=_utc_now(),
-        errorCode="NO_HUMAN_FACE",
-        message=(
-            "사람 얼굴이 검출되지 않아 딥페이크 판별을 수행할 수 없습니다."
-            f" (modules={','.join(modules)}{detail})"
-        ),
+    return _soft_inconclusive_response(
+        analysis_request_id=analysis_request_id,
+        evidence_id=evidence_id,
+        error_code="NO_HUMAN_FACE",
+        modules=modules,
+        frames_sampled=frames_sampled,
     )
+
+
+def _cnn_status_to_error_code(status: str) -> str | None:
+    if status in NO_FACE_STATUSES:
+        return "NO_HUMAN_FACE"
+    if status == "face_too_small":
+        return "FACE_TOO_SMALL"
+    if status == "insufficient_face_samples":
+        return "INSUFFICIENT_FACE_SAMPLES"
+    return None
 
 
 def build_analysis_response(
@@ -307,24 +403,35 @@ def build_analysis_response(
 
     cnn = run_xception_module(video_path, cfg, threshold=thresholds["cnn"], fps=fps)
     cnn_status = str((cnn.raw or {}).get("status", "ok"))
-    if cnn_status in NO_FACE_STATUSES or (cnn.raw or {}).get("fake_score") is None:
+    cnn_error = _cnn_status_to_error_code(cnn_status)
+    if cnn_error is not None or (cnn.raw or {}).get("fake_score") is None:
         breakdown = (cnn.raw or {}).get("score_breakdown") or {}
-        return _no_human_face_response(
+        return _soft_inconclusive_response(
             analysis_request_id=analysis_request_id,
             evidence_id=evidence_id,
+            error_code=cnn_error or "NO_HUMAN_FACE",
             modules=["cnn"],
             frames_sampled=breakdown.get("frames_sampled"),
         )
 
     temporal = run_timesformer_module(video_path, cfg, threshold=thresholds["temporal"], fps=fps)
     temporal_status = str((temporal.raw or {}).get("status", "ok"))
-    if temporal_status in NO_FACE_STATUSES or (temporal.raw or {}).get("fake_score") is None:
-        breakdown = (temporal.raw or {}).get("score_breakdown") or {}
-        return _no_human_face_response(
-            analysis_request_id=analysis_request_id,
-            evidence_id=evidence_id,
-            modules=["cnn", "temporal"],
-            frames_sampled=breakdown.get("frames_sampled"),
+    temporal_unavailable = (
+        temporal_status in TEMPORAL_UNAVAILABLE_STATUSES
+        or (temporal.raw or {}).get("fake_score") is None
+    )
+    soft_error_code: str | None = None
+    soft_error_message: str | None = None
+    if temporal_unavailable:
+        soft_error_code = "TEMPORAL_MODULE_UNAVAILABLE"
+        soft_error_message = (
+            "TimeSformer(시계열) 모듈을 사용할 수 없어 CNN·광학 흐름 중심으로 판별했습니다. "
+            f"(temporal_status={temporal_status})"
+        )
+        logger.warning(
+            "Temporal module unavailable; continuing with CNN/optical: evidenceId=%s status=%s",
+            evidence_id,
+            temporal_status,
         )
 
     optical = run_gmflow_module(video_path, cfg, threshold=thresholds["optical"], fps=fps)
@@ -333,16 +440,27 @@ def build_analysis_response(
     module_meta = {key: _model_meta(fusion_config, key) for key in modules}
     fusion = apply_late_fusion(
         cnn_score=cnn.video_score,
-        temporal_score=temporal.video_score,
+        temporal_score=0.0 if temporal_unavailable else temporal.video_score,
         optical_score=optical.video_score,
         config=fusion_config,
         module_meta=module_meta,
     )
+    if soft_error_message:
+        fusion = FusionResult(
+            score=fusion.score,
+            detected=fusion.detected,
+            confidence=fusion.confidence,
+            risk_score=fusion.risk_score,
+            risk_level=fusion.risk_level,
+            reasons=[soft_error_message, *fusion.reasons],
+        )
+
     model_scores = _build_model_scores(fusion, modules, fusion_config)
     module_timelines = _build_module_timelines(modules, fusion_config)
     fusion_meta = _model_meta(fusion_config, "fusion")
     representative_frames = None
     overlay_video_url = None
+    model_overlay_artifacts: list[ModelOverlayArtifactItem] = []
     fused_visualization_scores: list[dict[str, Any]] = []
 
     try:
@@ -356,20 +474,6 @@ def build_analysis_response(
             visualization_scores = _to_visualization_scores(cnn.frame_risks)
         if not visualization_scores:
             visualization_scores = _fallback_visualization_scores(video_path, fusion.score, fps)
-            logger.info(
-                "Using fallback visualization scores: evidenceId=%s analysisRequestId=%s score=%s points=%s",
-                evidence_id,
-                analysis_request_id,
-                fusion.score,
-                len(visualization_scores),
-            )
-        else:
-            logger.info(
-                "Using fused per-face scores for visualization: evidenceId=%s analysisRequestId=%s points=%s",
-                evidence_id,
-                analysis_request_id,
-                len(visualization_scores),
-            )
 
         viz = build_visualization_artifacts(
             video_path=video_path,
@@ -382,21 +486,31 @@ def build_analysis_response(
             representative_frames = [
                 RepresentativeFrameItem(**row) for row in viz.representative_frames
             ]
-            overlay_video_url = viz.overlay_video_url
-            logger.info(
-                "Visualization artifacts attached: evidenceId=%s analysisRequestId=%s frames=%s overlay=%s",
-                evidence_id,
-                analysis_request_id,
-                len(representative_frames or []),
-                bool(overlay_video_url),
-            )
-        else:
-            logger.warning(
-                "Visualization artifact builder returned no artifacts: evidenceId=%s analysisRequestId=%s points=%s",
-                evidence_id,
-                analysis_request_id,
-                len(visualization_scores),
-            )
+
+        overlay_set = build_module_overlay_set(
+            video_path=video_path,
+            evidence_id=evidence_id,
+            analysis_request_id=analysis_request_id,
+            work_dir=cfg.work_dir / "visualization" / f"{evidence_id}_{analysis_request_id}" / "modules",
+            cnn_per_frame_scores=_module_per_frame_scores(cnn),
+            clip_risks=temporal.clip_risks,
+            pair_risks=optical.pair_risks,
+        )
+        overlay_video_url = overlay_set.legacy_cnn_overlay_url
+        model_overlay_artifacts = [
+            ModelOverlayArtifactItem(**row) for row in overlay_set.model_overlay_artifacts
+        ]
+        for timeline in module_timelines:
+            url = overlay_set.overlay_by_module.get(timeline.module)
+            if url:
+                timeline.overlayVideoUrl = url
+        logger.info(
+            "Module overlays attached: evidenceId=%s cnn=%s temporal=%s optical=%s",
+            evidence_id,
+            bool(overlay_set.overlay_by_module.get("cnn")),
+            bool(overlay_set.overlay_by_module.get("temporal")),
+            bool(overlay_set.overlay_by_module.get("optical")),
+        )
     except Exception:
         logger.exception(
             "Failed to build visualization artifacts: evidenceId=%s analysisRequestId=%s",
@@ -408,6 +522,13 @@ def build_analysis_response(
         fused_visualization_scores or _module_per_frame_scores(cnn),
         video_path,
     )
+    suspicious_cfg = fusion_config.get("suspicious_segment") or {}
+    fused_segments = build_suspicious_segments(
+        fused_frame_risks,
+        high_risk_threshold=float(suspicious_cfg.get("high_risk_frame_threshold", 0.65)),
+        min_segment_sec=float(suspicious_cfg.get("min_segment_sec", 0.5)),
+        reason="High fused frame-level fake probability cluster",
+    )
 
     video_item = AnalysisVideoResultItem(
         modelName=str(fusion_meta.get("modelName", "Late Fusion")),
@@ -417,13 +538,14 @@ def build_analysis_response(
         frameRisks=_to_frame_risks(fused_frame_risks) or None,
         clipRisks=_to_clip_risks(temporal.clip_risks) or None,
         pairRisks=_to_pair_risks(optical.pair_risks) or None,
-        suspiciousSegments=_to_segments(cnn.suspicious_segments) or None,
+        suspiciousSegments=_to_segments(fused_segments) or None,
         temporalSuspiciousSegments=_to_segments(temporal.temporal_suspicious_segments) or None,
         opticalSuspiciousSegments=_to_segments(optical.optical_suspicious_segments) or None,
         moduleTimelines=module_timelines,
         modelScores=model_scores,
         representativeFrames=representative_frames,
         overlayVideoUrl=overlay_video_url,
+        modelOverlayArtifacts=model_overlay_artifacts or None,
         perFrameFaceScores=_to_per_frame_face_score_items(fused_visualization_scores)
         if fused_visualization_scores
         else None,
@@ -441,5 +563,7 @@ def build_analysis_response(
         analysisReasons=fusion.reasons,
         results=[video_item],
         analyzedAt=_utc_now(),
+        errorCode=soft_error_code,
+        message=soft_error_message,
         modelScores=model_scores,
     )

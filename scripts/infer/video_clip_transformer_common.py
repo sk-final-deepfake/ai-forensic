@@ -39,8 +39,10 @@ def _collect_face_samples(
     face_cropper: object | None,
     face_cascade: cv2.CascadeClassifier | None,
     clip_size: int,
-) -> list[dict]:
+) -> tuple[list[dict], dict[str, int]]:
     face_samples: list[dict] = []
+    raw_detections = 0
+    rejected_small = 0
     for sample in samples:
         if face_cropper is not None and hasattr(face_cropper, "crop_all"):
             face_entries = face_cropper.crop_all(sample["frame"])
@@ -58,6 +60,9 @@ def _collect_face_samples(
                 if crop is not None
                 else []
             )
+        stats = getattr(face_cropper, "last_detect_stats", None) or {}
+        raw_detections += int(stats.get("raw", 0))
+        rejected_small += int(stats.get("rejected_small", 0))
         for entry in face_entries:
             face_samples.append(
                 {
@@ -67,7 +72,7 @@ def _collect_face_samples(
                     "crop": entry["crop"],
                 }
             )
-    return face_samples
+    return face_samples, {"raw": raw_detections, "rejected_small": rejected_small, "kept": len(face_samples)}
 
 
 def _group_face_samples_by_slot(face_samples: list[dict]) -> dict[int, list[dict]]:
@@ -299,7 +304,7 @@ def infer_video_clip_model(
     aggregate: str = "mean",
 ) -> dict:
     samples = read_frame_samples(video_path, num_frames=num_frames)
-    face_samples = _collect_face_samples(
+    face_samples, detect_stats = _collect_face_samples(
         samples,
         face_cropper=face_cropper,
         face_cascade=face_cascade,
@@ -316,7 +321,21 @@ def infer_video_clip_model(
     if face_cropper is not None and hasattr(face_cropper, "config"):
         min_faces = max(min_faces, int(getattr(face_cropper.config, "min_sample_faces", 4)))
     unique_frames_with_face = len({sample["frame_index"] for sample in face_samples})
-    if not face_samples or unique_frames_with_face < min_faces:
+    raw_detections = int(detect_stats.get("raw", 0))
+    rejected_small = int(detect_stats.get("rejected_small", 0))
+
+    gate_status = "ok"
+    if face_cropper is not None and hasattr(face_cropper, "classify_empty_face_status"):
+        gate_status = face_cropper.classify_empty_face_status(
+            unique_usable_frames=unique_frames_with_face,
+            min_faces=min_faces,
+            raw_detections=raw_detections,
+            rejected_small=rejected_small,
+        )
+    elif not face_samples or unique_frames_with_face < min_faces:
+        gate_status = no_face_status
+
+    if gate_status != "ok":
         breakdown = empty_clip_score_breakdown(
             method=method,
             threshold=threshold,
@@ -329,9 +348,13 @@ def infer_video_clip_model(
         if face_cropper is not None and hasattr(face_cropper, "to_metadata"):
             breakdown.update(face_cropper.to_metadata())
         breakdown["multi_face"] = multi_face
+        breakdown["raw_face_detections"] = raw_detections
+        breakdown["rejected_small_faces"] = rejected_small
+        breakdown["unique_frames_with_face"] = unique_frames_with_face
+        breakdown["face_gate_status"] = gate_status
         return {
             "file": video_path.name,
-            "status": no_face_status,
+            "status": gate_status,
             "fake_score": None,
             "pred_label": None,
             "frames_used": len(face_samples),
@@ -378,9 +401,14 @@ def infer_video_clip_model(
         if face_cropper is not None and hasattr(face_cropper, "to_metadata"):
             breakdown.update(face_cropper.to_metadata())
         breakdown["multi_face"] = multi_face
+        breakdown["raw_face_detections"] = raw_detections
+        breakdown["rejected_small_faces"] = rejected_small
+        breakdown["unique_frames_with_face"] = unique_frames_with_face
+        # Faces exist but TimeSformer could not form clips — not NO_HUMAN_FACE.
+        breakdown["face_gate_status"] = "insufficient_temporal_clips"
         return {
             "file": video_path.name,
-            "status": no_face_status,
+            "status": "insufficient_temporal_clips",
             "fake_score": None,
             "pred_label": None,
             "frames_used": len(face_samples),
@@ -402,6 +430,8 @@ def infer_video_clip_model(
     )
     if face_cropper is not None and hasattr(face_cropper, "to_metadata"):
         breakdown.update(face_cropper.to_metadata())
+    breakdown["raw_face_detections"] = raw_detections
+    breakdown["rejected_small_faces"] = rejected_small
     return {
         "file": video_path.name,
         "status": "ok",

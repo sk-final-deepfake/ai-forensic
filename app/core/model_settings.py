@@ -21,7 +21,7 @@ class ModelSettings:
 
 
 def _load_default_fusion_path() -> Path:
-    return config_dir() / "fusion_v0.json"
+    return config_dir() / "fusion_v4_ts_gated.json"
 
 
 def _load_default_cohort_path() -> Path:

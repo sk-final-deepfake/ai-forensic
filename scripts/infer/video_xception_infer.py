@@ -419,6 +419,8 @@ def infer_video(
 ) -> dict:
     samples = read_frame_samples(video_path, num_frames=num_frames)
     face_samples: list[dict] = []
+    raw_detections = 0
+    rejected_small = 0
     for sample in samples:
         if hasattr(face_cropper, "crop_all"):
             face_entries = face_cropper.crop_all(sample["frame"])
@@ -429,6 +431,9 @@ def infer_video(
                 if crop is not None
                 else []
             )
+        stats = getattr(face_cropper, "last_detect_stats", None) or {}
+        raw_detections += int(stats.get("raw", 0))
+        rejected_small += int(stats.get("rejected_small", 0))
         for entry in face_entries:
             face_samples.append(
                 {
@@ -439,25 +444,20 @@ def infer_video(
                 }
             )
 
-    if not face_samples:
-        breakdown = empty_score_breakdown(
-            threshold=threshold,
-            frames_sampled=len(samples),
-            frames_without_face=len(samples),
-        )
-        breakdown.update(face_cropper.to_metadata())
-        return {
-            "file": video_path.name,
-            "status": face_cropper.no_face_status(),
-            "fake_score": None,
-            "pred_label": None,
-            "frames_used": 0,
-            "score_breakdown": breakdown,
-        }
-
     min_faces = max(1, int(getattr(face_cropper.config, "min_sample_faces", 1)))
     unique_frames_with_face = len({sample["frame_index"] for sample in face_samples})
-    if unique_frames_with_face < min_faces:
+    gate_status = "ok"
+    if hasattr(face_cropper, "classify_empty_face_status"):
+        gate_status = face_cropper.classify_empty_face_status(
+            unique_usable_frames=unique_frames_with_face,
+            min_faces=min_faces,
+            raw_detections=raw_detections,
+            rejected_small=rejected_small,
+        )
+    elif not face_samples or unique_frames_with_face < min_faces:
+        gate_status = face_cropper.no_face_status()
+
+    if gate_status != "ok":
         breakdown = empty_score_breakdown(
             threshold=threshold,
             frames_sampled=len(samples),
@@ -466,9 +466,12 @@ def infer_video(
         breakdown.update(face_cropper.to_metadata())
         breakdown["frames_with_face"] = len(face_samples)
         breakdown["unique_frames_with_face"] = unique_frames_with_face
+        breakdown["raw_face_detections"] = raw_detections
+        breakdown["rejected_small_faces"] = rejected_small
+        breakdown["face_gate_status"] = gate_status
         return {
             "file": video_path.name,
-            "status": face_cropper.no_face_status(),
+            "status": gate_status,
             "fake_score": None,
             "pred_label": None,
             "frames_used": len(face_samples),
@@ -488,6 +491,8 @@ def infer_video(
         top_k=top_k,
     )
     breakdown.update(face_cropper.to_metadata())
+    breakdown["raw_face_detections"] = raw_detections
+    breakdown["rejected_small_faces"] = rejected_small
     fake_score = breakdown["aggregate_fake_score"]
     pred_label = breakdown["aggregate"]["pred_label"]
     return {

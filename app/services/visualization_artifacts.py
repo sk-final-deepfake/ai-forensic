@@ -398,6 +398,8 @@ def build_visualization_artifacts(
         square=True,
         human_only=True,
         yunet_score_threshold=_overlay_yunet_threshold(),
+        # Overlay draws every YuNet hit; inference quality gate (48px) does not apply here.
+        min_face_side_px=1,
     )
 
     representative_rows = _pick_representative_rows(per_frame_scores, _max_representative_frames())
@@ -491,9 +493,12 @@ def _build_overlay_video(
     work_dir: Path,
     evidence_id: int,
     analysis_request_id: int,
+    upload_name: str | None = None,
 ) -> str | None:
     if os.getenv("AI_VISUALIZATION_OVERLAY", "1").lower() in {"0", "false", "no"}:
         return None
+
+    work_dir.mkdir(parents=True, exist_ok=True)
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -578,5 +583,5 @@ def _build_overlay_video(
         playable_overlay,
         evidence_id=evidence_id,
         analysis_request_id=analysis_request_id,
-        name=overlay_path.name,
+        name=upload_name or overlay_path.name,
     )

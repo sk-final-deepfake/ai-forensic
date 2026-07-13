@@ -39,6 +39,12 @@ class GatingConfig:
     dual_high_ts_min: float = 0.85
     dual_high_gmf_max: float = 0.0
     dual_high_fusion_cap: float = 0.0
+    # When CNN misses but TimeSformer + GMFlow both fire, rescue toward FAKE.
+    dual_module_rescue: bool = True
+    dual_module_ts_min: float = 0.60
+    dual_module_gmf_min: float = 0.50
+    dual_module_ts_weight: float = 0.70
+    dual_module_gmf_weight: float = 0.30
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any] | None) -> GatingConfig:
@@ -71,6 +77,11 @@ class GatingConfig:
             dual_high_ts_min=float(payload.get("dual_high_ts_min", 0.85)),
             dual_high_gmf_max=float(payload.get("dual_high_gmf_max", 0.0)),
             dual_high_fusion_cap=float(payload.get("dual_high_fusion_cap", 0.0)),
+            dual_module_rescue=bool(payload.get("dual_module_rescue", True)),
+            dual_module_ts_min=float(payload.get("dual_module_ts_min", 0.60)),
+            dual_module_gmf_min=float(payload.get("dual_module_gmf_min", 0.50)),
+            dual_module_ts_weight=float(payload.get("dual_module_ts_weight", 0.70)),
+            dual_module_gmf_weight=float(payload.get("dual_module_gmf_weight", 0.30)),
         )
 
 
@@ -156,6 +167,7 @@ def fuse_scores_gated(
         "ts_rescue_tier": None,
         "ts_base_blend_active": False,
         "dual_high_cap_active": False,
+        "dual_module_rescue_active": False,
         "gmflow_veto_active": False,
         "gmflow_soft_veto_active": False,
         "ambiguous_boost_active": False,
@@ -246,6 +258,18 @@ def fuse_scores_gated(
     ):
         fusion = g.dual_high_fusion_cap
         meta["dual_high_cap_active"] = True
+
+    # CNN miss / weak, but TimeSformer + GMFlow both strong → dual-module rescue.
+    if (
+        g.dual_module_rescue
+        and s_cnn < cnn_th
+        and s_temporal >= g.dual_module_ts_min
+        and s_optical >= g.dual_module_gmf_min
+    ):
+        rescue = g.dual_module_ts_weight * s_temporal + g.dual_module_gmf_weight * s_optical
+        if rescue > fusion:
+            fusion = rescue
+            meta["dual_module_rescue_active"] = True
 
     meta["fusion_base"] = round(base, 6)
     return round(fusion, 6), meta
@@ -341,6 +365,8 @@ def build_analysis_reasons(
         if gate_meta.get("ts_rescue_active"):
             tier = gate_meta.get("ts_rescue_tier")
             flags.append(f"TimeSformer rescue ({tier})" if tier else "TimeSformer rescue")
+        if gate_meta.get("dual_module_rescue_active"):
+            flags.append("dual-module TS+GMFlow rescue")
         if gate_meta.get("dual_high_cap_active"):
             flags.append("dual-high CNN+TS cap")
         if gate_meta.get("gmflow_veto_active"):

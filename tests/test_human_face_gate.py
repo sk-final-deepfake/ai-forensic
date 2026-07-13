@@ -90,9 +90,11 @@ class HumanFaceGateTests(unittest.TestCase):
             modules,
             config=config,
         )
-        self.assertEqual(response.status, "FAILED")
+        self.assertEqual(response.status, "COMPLETED")
         self.assertEqual(response.errorCode, "NO_HUMAN_FACE")
         self.assertIn("사람 얼굴", response.message or "")
+        self.assertEqual(len(response.results), 1)
+        self.assertFalse(response.results[0].deepfakeDetected)
 
 
 if __name__ == "__main__":

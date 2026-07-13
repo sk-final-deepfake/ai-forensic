@@ -1,0 +1,113 @@
+{
+  "model": "trufor",
+  "modality": "spatial",
+  "version": "v1.0.0",
+  "line": "videocof-v2",
+  "run_name": "trufor-videocof-v2-20260710-0800",
+  "adopted_at": "2026-07-13",
+  "status": "dev_adopted",
+  "scope": "videocof_only",
+  "supersedes": null,
+  "note_vs_r5_mvtb": "R5 mvtb dev(thr=0.185)와 병행. VideoCoF 채택이 R5 mvtb를 대체하지 않음. 벤치·ckpt·threshold 분리.",
+  "strategy": "VideoCoF spatial FT (obj_removal/obj_swap) + infer F16 top3_mean + thr 0.5",
+  "infer_recipe": {
+    "num_frames": 16,
+    "aggregate": "top3_mean",
+    "align_pairs": true,
+    "threshold": 0.5,
+    "threshold_note": "official test400 기본 thr. 재튜닝 금지 until branch FT. 벤치별 thr 공유 금지."
+  },
+  "checkpoint": "models/train/spatial/trufor/videocof-v2/trufor-videocof-v2-20260710-0800/trufor_videocof_v2_ft/best.pth.tar",
+  "checkpoint_resolved_best": "models/train/spatial/trufor/videocof-v2/trufor-videocof-v2-20260710-0800/resolved_best.txt",
+  "pretrain": "models/test/spatial/trufor/v1.0.0/trufor.pth.tar",
+  "train_video_root": "data/train/video/spatial-videocof",
+  "config_exp": "trufor_videocof_v2_ft",
+  "models_test": "not_promoted",
+  "models_deploy": "not_promoted",
+  "benchmarks": {
+    "videocof_official_test400": {
+      "adopted": true,
+      "dataset": "data/test/video/spatial-videocof-benchmark",
+      "tamper_types": ["edit/removal", "edit/swap"],
+      "composition": { "real": 200, "fake": 200, "fake_removal": 100, "fake_swap": 100 },
+      "threshold": 0.5,
+      "run_id": "trufor-videocof-v2-official-test400-f16-align-top3",
+      "metrics_path": "results/infer/trufor-videocof-v2-official-test400-f16-align-top3/predictions.json",
+      "confusion": { "tp": 143, "tn": 159, "fp": 41, "fn": 57 },
+      "accuracy": 0.755,
+      "roc_auc": null,
+      "gate_note": "VideoCoF primary KPI — Acc≥0.75 @ thr 0.5 (observed)"
+    },
+    "videocof_trainbench400": {
+      "adopted": false,
+      "role": "same_domain_holdout_check_with_v2_weights",
+      "dataset": "data/train/video/spatial-videocof-benchmark",
+      "threshold": 0.5,
+      "run_id": "trufor-videocof-trainbench400-oodcheck-v2weights-f16-top3",
+      "confusion": { "tp": 187, "tn": 192, "fp": 8, "fn": 13 },
+      "accuracy": 0.9475,
+      "roc_auc": 0.9779,
+      "note": "trainbench Acc(94.8%) > official test(75.5%). 도메인 내 과적합 가능하나 VideoCoF test는 채택 기준 충족. 파일명 overlap train↔test400 = 0."
+    },
+    "mvtb200_cross_eval": {
+      "adopted": false,
+      "role": "negative_transfer_baseline_for_branch_B",
+      "dataset": "data/pull/evidence/mvtamperbench-200-s3",
+      "threshold": 0.5,
+      "run_id": "trufor-mvtb200-videocof-v2-xeval-f16-top3-20260713-0113",
+      "confusion": { "tp": 73, "tn": 21, "fp": 79, "fn": 27 },
+      "accuracy": 0.47,
+      "roc_auc": 0.4804,
+      "real_avg_tamper_score": 0.756989,
+      "fake_avg_tamper_score": 0.734645,
+      "note": "전이 실패. thr만으로 구제 불가(real≈fake score). mvtb 분기 FT 필요."
+    },
+    "csvted_cross_eval": {
+      "adopted": false,
+      "role": "negative_transfer_baseline_for_branch_C",
+      "dataset": "data/pull/evidence/csvted-200-balanced",
+      "observed_count": 80,
+      "threshold": 0.5,
+      "run_id": "trufor-csvted-videocof-v2-xeval-f16-top3-20260713-0113",
+      "confusion": { "tp": 32, "tn": 13, "fp": 27, "fn": 8 },
+      "accuracy": 0.5625,
+      "roc_auc": 0.5437,
+      "note": "temporal 위주 + FP 다수. csvted 분기 FT 또는 GMFlow fusion. VideoCoF thr 공유 금지."
+    }
+  },
+  "branch_plan": {
+    "from_checkpoint": "models/train/spatial/trufor/videocof-v2/trufor-videocof-v2-20260710-0800/trufor_videocof_v2_ft/best.pth.tar",
+    "A_videocof": {
+      "status": "adopted",
+      "action": "freeze_weights_and_thr_0.5"
+    },
+    "B_mvtb": {
+      "status": "planned",
+      "init": "videocof-v2 best.pth.tar",
+      "train_data_needed": [
+        "data/train/video/forgery-gmflow-train-400",
+        "data/train/video/forgery-gmflow-train-mvtb-1k"
+      ],
+      "train_data_note": "2026-07-13 GPU 확인 시 train/video 아래 mvtb/gmflow 풀 없음 — 복구 후 FT",
+      "focus_tamper_types": ["masking", "substitution", "rotate"],
+      "eval": "data/pull/evidence/mvtamperbench-200-s3",
+      "threshold": "Phase0 sweep after FT; do not reuse 0.5 or R5 0.185 blindly",
+      "gate_anchor": "TP>=63 & FP<=51 @ calibrated thr (legacy mvtb gate)"
+    },
+    "C_csvted": {
+      "status": "planned",
+      "init": "videocof-v2 best.pth.tar",
+      "train_data": "data/train/video/forgery-csvted-train-temporal",
+      "eval": "data/pull/evidence/csvted-200-balanced",
+      "threshold": "separate sweep; FP-aware",
+      "caveat": "TruFor spatial 단독 한계 가능 — fusion/GMFlow 병행 검토"
+    }
+  },
+  "deferred": {
+    "models_test_promote": "team_review",
+    "models_deploy": "after B/C or videocof-only product decision",
+    "mvtb_train_pool_restore": "required_before_branch_B",
+    "single_ckpt_for_all_benches": "rejected"
+  },
+  "doc": "docs/ai/21-TruFor-VideoCoF-채택-및-분기-튜닝.md"
+}

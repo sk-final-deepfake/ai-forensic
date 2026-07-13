@@ -8,7 +8,7 @@
 #   bash scripts/train/run_mvtb500_holdout_eval.sh
 #
 # Env overrides:
-#   CKPT=...  DATA_ROOT=...  LOCKED_THR=0.185  RUN_ID=...
+#   CKPT=...  DATA_ROOT=...  LOCKED_THR=0.185  RUN_ID=...  NUM_FRAMES=8
 
 set -euo pipefail
 
@@ -19,6 +19,7 @@ source ../.venv/bin/activate 2>/dev/null || true
 CKPT="${CKPT:-models/dev/spatial/trufor/v1.0.0/forgery-r5-20260702-0722/trufor.pth.tar}"
 DATA_ROOT="${DATA_ROOT:-data/pull/evidence/mvtamperbench-500-holdout}"
 LOCKED_THR="${LOCKED_THR:-0.185}"
+NUM_FRAMES="${NUM_FRAMES:-8}"
 RUN_DATE="$(date +%Y%m%d-%H%M)"
 RUN_ID="${RUN_ID:-trufor-mvtb500-holdout-r5-${RUN_DATE}}"
 MANIFEST="${DATA_ROOT}/manifest.json"
@@ -38,7 +39,7 @@ echo "[1/3] infer @0.5 (scores only; thr applied in eval)"
 python3 scripts/infer/spatial_mvtamperbench_benchmark.py \
   --root "$ROOT" \
   --data-root "$DATA_ROOT" \
-  --model trufor --num-frames 8 --threshold 0.5 \
+  --model trufor --num-frames "$NUM_FRAMES" --threshold 0.5 \
   --trufor-weights "$CKPT" \
   --run-id "$RUN_ID"
 

@@ -19,7 +19,7 @@ param(
     [string]$Mode = "tar",
     [ValidateSet("all", "mvtb", "csvted")]
     [string]$Dataset = "all",
-    [string]$RemoteHost = "sk4team@58.127.241.84",
+    [string]$RemoteHost = "sk4team@58.151.205.220",
     [string]$RemoteEvidenceRoot = "~/forenShield-ai/forgery/data/pull/evidence",
     [string]$LocalRoot = "c:\FINAL\ai-forensic\data\pull\evidence"
 )
@@ -36,8 +36,9 @@ function Ensure-Dir([string]$Path) {
 }
 
 function Invoke-Remote([string]$Command) {
-    Write-Host ">> ssh $RemoteHost $Command" -ForegroundColor DarkGray
-    ssh $RemoteHost $Command
+    # PowerShell이 && 를 로컬에서 해석하지 않도록 원격 명령을 반드시 한 덩어리로 전달
+    Write-Host ">> ssh $RemoteHost `"$Command`"" -ForegroundColor DarkGray
+    ssh -t $RemoteHost "bash -lc $(ConvertTo-Json $Command)"
     if ($LASTEXITCODE -ne 0) { throw "remote command failed: $Command" }
 }
 

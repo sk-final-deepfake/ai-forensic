@@ -265,7 +265,7 @@ def main() -> None:
         cfg_opts.extend(["TRAIN.PRETRAINING", str(pretrained_ckpt)])
     if args.resume:
         cfg_opts.append("TRAIN.RESUME")
-        cfg_opts.append("true")
+        cfg_opts.append("True")
     cfg_opts.extend(args.opts)
 
     update_config(

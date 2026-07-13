@@ -15,11 +15,13 @@ from app.schemas.ai_response import (
     AnalysisResponseMessage,
     AnalysisVideoResultItem,
     ClipRiskItem,
+    FaceBBoxItem,
     FrameRiskItem,
     ModelOverlayArtifactItem,
     ModelScoreItem,
     ModuleTimelineItem,
     PairRiskItem,
+    PerFrameFaceScoreItem,
     RepresentativeFrameItem,
     SuspiciousSegmentItem,
 )
@@ -47,6 +49,40 @@ logger = logging.getLogger("ai_fastapi.video_deepfake_analyzer")
 
 FUSION_MODEL_NAME = "forenshield-late-fusion"
 NO_HUMAN_FACE_STATUSES = frozenset({"no_face", "no_human_face", "skipped_no_human_face"})
+
+
+def _to_per_frame_face_scores(rows: list[dict[str, Any]]) -> list[PerFrameFaceScoreItem]:
+    items: list[PerFrameFaceScoreItem] = []
+    for row in rows:
+        frame_index = row.get("frame_index", row.get("frameIndex"))
+        score = row.get("fake_score", row.get("prob_fake", row.get("riskScore")))
+        if frame_index is None or score is None:
+            continue
+        bbox_item = None
+        bbox = row.get("bbox")
+        if isinstance(bbox, dict) and all(key in bbox for key in ("x", "y", "w", "h")):
+            bbox_item = FaceBBoxItem(
+                x=int(bbox["x"]),
+                y=int(bbox["y"]),
+                w=int(bbox["w"]),
+                h=int(bbox["h"]),
+            )
+        elif isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+            bbox_item = FaceBBoxItem(
+                x=int(bbox[0]),
+                y=int(bbox[1]),
+                w=int(bbox[2]),
+                h=int(bbox[3]),
+            )
+        items.append(
+            PerFrameFaceScoreItem(
+                frameIndex=int(frame_index),
+                faceIndex=int(row.get("face_index", row.get("faceIndex", 0))),
+                riskScore=round(float(score), 6),
+                bbox=bbox_item,
+            )
+        )
+    return items
 
 
 def _utc_now_iso() -> str:
@@ -106,6 +142,68 @@ def _failed_response(
         analyzedAt=_utc_now_iso(),
         errorCode=error_code,
         message=message,
+    )
+
+
+def _inconclusive_no_human_face_response(
+    request: AnalysisRequest,
+    *,
+    blocked_modules: list[str],
+    frames_sampled: int | None = None,
+) -> AnalysisResponseMessage:
+    """Soft-complete so downstream forgery/integrity stages can still run."""
+    detail = f" sampled_frames={frames_sampled}" if frames_sampled is not None else ""
+    message = (
+        "사람 얼굴이 검출되지 않아 딥페이크 판별을 수행할 수 없습니다. "
+        "위변조 등 후속 분석은 계속 진행할 수 있습니다."
+        f" (modules={','.join(blocked_modules)}{detail})"
+    )
+    reasons = [
+        "NO_HUMAN_FACE: 딥페이크 모델(얼굴 기반) 판단 불가",
+        message,
+    ]
+    video_result = AnalysisVideoResultItem(
+        deepfakeDetected=False,
+        deepfakeScore=0.0,
+        frameRisks=[],
+        clipRisks=[],
+        pairRisks=[],
+        suspiciousSegments=[],
+        temporalSuspiciousSegments=[],
+        opticalSuspiciousSegments=[],
+        moduleTimelines=[],
+        modelName=FUSION_MODEL_NAME,
+        modelVersion="inconclusive-no-human-face",
+        modelScores=[
+            ModelScoreItem(
+                moduleName="deepfake",
+                detected=False,
+                score=0.0,
+                modelName=FUSION_MODEL_NAME,
+                modelVersion="inconclusive-no-human-face",
+            )
+        ],
+        evidence=reasons,
+        representativeFrames=[],
+        overlayVideoUrl=None,
+        perFrameFaceScores=[],
+    )
+    return AnalysisResponseMessage(
+        analysisRequestId=request.analysisRequestId,
+        evidenceId=_resolve_evidence_id(request),
+        status="COMPLETED",
+        riskScore=0.0,
+        confidenceScore=0.0,
+        riskLevel="LOW",
+        analysisReasons=reasons,
+        results=[video_result],
+        analyzedAt=_utc_now_iso(),
+        errorCode="NO_HUMAN_FACE",
+        message=message,
+        modelName=FUSION_MODEL_NAME,
+        modelVersion="inconclusive-no-human-face",
+        modelScores=video_result.modelScores,
+        evidence=reasons,
     )
 
 
@@ -218,16 +316,10 @@ def build_response_from_modules(
         frames_sampled = None
         if cnn and cnn.details:
             frames_sampled = (cnn.details.get("score_breakdown") or {}).get("frames_sampled")
-        detail = (
-            f" sampled_frames={frames_sampled}" if frames_sampled is not None else ""
-        )
-        return _failed_response(
+        return _inconclusive_no_human_face_response(
             request,
-            error_code="NO_HUMAN_FACE",
-            message=(
-                "사람 얼굴이 검출되지 않아 딥페이크 판별을 수행할 수 없습니다."
-                f" (modules={','.join(blocked_modules)}{detail})"
-            ),
+            blocked_modules=blocked_modules,
+            frames_sampled=frames_sampled if isinstance(frames_sampled, int) else None,
         )
 
     missing = [
@@ -392,6 +484,7 @@ def build_response_from_modules(
         representativeFrames=representative_frames,
         overlayVideoUrl=overlay_video_url,
         modelOverlayArtifacts=model_overlay_artifacts,
+        perFrameFaceScores=_to_per_frame_face_scores(fused_per_frame) if fused_per_frame else [],
     )
 
     return AnalysisResponseMessage(

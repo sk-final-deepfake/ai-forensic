@@ -41,8 +41,8 @@ def _overlay_max_seconds() -> float:
 
 
 def _overlay_yunet_threshold() -> float:
-    """Lower than inference default (0.75) so overlay catches smaller/secondary faces."""
-    return float(os.getenv("AI_VISUALIZATION_YUNET_THRESHOLD", "0.5"))
+    """Match inference YuNet default (0.75). Only scored faces are drawn as boxes."""
+    return float(os.getenv("AI_VISUALIZATION_YUNET_THRESHOLD", "0.75"))
 
 
 def _bbox_iou(
@@ -88,7 +88,11 @@ def _enrich_faces_for_overlay(
     *,
     fallback_score: float = 0.0,
 ) -> list[dict[str, Any]]:
-    """Draw every YuNet-detected face; map fusion scores by bbox IoU / face_index."""
+    """Align scored faces to YuNet boxes (same threshold as inference). Never invent unscored boxes."""
+    del fallback_score  # kept for call-site compatibility; unused by design
+    if not scored_faces:
+        return []
+
     detected = _face_bboxes_on_frame(cropper, frame)
     if not detected:
         return [
@@ -101,7 +105,6 @@ def _enrich_faces_for_overlay(
             if (bbox := _resolve_scored_bbox(face, [])) is not None
         ]
 
-    frame_default = max((float(face["score"]) for face in scored_faces), default=fallback_score)
     used_detection: set[int] = set()
     enriched: list[dict[str, Any]] = []
 
@@ -131,11 +134,6 @@ def _enrich_faces_for_overlay(
                 if _bbox_iou(scored_bbox, det) >= 0.5:
                     used_detection.add(j)
                     break
-
-    for j, det in enumerate(detected):
-        if j in used_detection:
-            continue
-        enriched.append({"bbox": det, "score": frame_default, "face_index": j})
 
     enriched.sort(key=lambda item: (item["face_index"], -item["score"]))
     return enriched

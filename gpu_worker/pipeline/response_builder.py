@@ -5,7 +5,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.services.late_fusion import build_fused_per_frame_scores, collapse_frame_risks_by_frame
+from app.services.late_fusion import (
+    build_fused_per_frame_scores,
+    build_suspicious_segments,
+    collapse_frame_risks_by_frame,
+)
 from app.services.module_overlays import build_module_overlay_set
 from app.services.visualization_artifacts import build_visualization_artifacts
 from gpu_worker.config import WorkerConfig
@@ -279,16 +283,55 @@ def _no_human_face_response(
     frames_sampled: int | None = None,
 ) -> AnalysisResponseMessage:
     detail = f" sampled_frames={frames_sampled}" if frames_sampled is not None else ""
+    message = (
+        "사람 얼굴이 검출되지 않아 딥페이크 판별을 수행할 수 없습니다. "
+        "위변조 등 후속 분석은 계속 진행할 수 있습니다."
+        f" (modules={','.join(modules)}{detail})"
+    )
+    reasons = [
+        "NO_HUMAN_FACE: 딥페이크 모델(얼굴 기반) 판단 불가",
+        message,
+    ]
+    video_item = AnalysisVideoResultItem(
+        modelName="forenshield-late-fusion",
+        modelVersion="inconclusive-no-human-face",
+        deepfakeDetected=False,
+        deepfakeScore=0.0,
+        frameRisks=None,
+        clipRisks=None,
+        pairRisks=None,
+        suspiciousSegments=None,
+        temporalSuspiciousSegments=None,
+        opticalSuspiciousSegments=None,
+        moduleTimelines=None,
+        modelScores=[
+            ModelScoreItem(
+                moduleName="deepfake",
+                detected=False,
+                score=0.0,
+                modelName="forenshield-late-fusion",
+                modelVersion="inconclusive-no-human-face",
+            )
+        ],
+        representativeFrames=None,
+        overlayVideoUrl=None,
+        perFrameFaceScores=None,
+    )
     return AnalysisResponseMessage(
         analysisRequestId=analysis_request_id,
         evidenceId=evidence_id,
-        status="FAILED",
+        status="COMPLETED",
+        riskScore=0.0,
+        confidenceScore=0.0,
+        riskLevel="LOW",
         analyzedAt=_utc_now(),
         errorCode="NO_HUMAN_FACE",
-        message=(
-            "사람 얼굴이 검출되지 않아 딥페이크 판별을 수행할 수 없습니다."
-            f" (modules={','.join(modules)}{detail})"
-        ),
+        message=message,
+        analysisReasons=reasons,
+        results=[video_item],
+        modelScores=video_item.modelScores,
+        modelName=video_item.modelName,
+        modelVersion=video_item.modelVersion,
     )
 
 
@@ -407,6 +450,13 @@ def build_analysis_response(
         fused_visualization_scores or _module_per_frame_scores(cnn),
         video_path,
     )
+    suspicious_cfg = fusion_config.get("suspicious_segment") or {}
+    fused_segments = build_suspicious_segments(
+        fused_frame_risks,
+        high_risk_threshold=float(suspicious_cfg.get("high_risk_frame_threshold", 0.65)),
+        min_segment_sec=float(suspicious_cfg.get("min_segment_sec", 0.5)),
+        reason="High fused frame-level fake probability cluster",
+    )
 
     video_item = AnalysisVideoResultItem(
         modelName=str(fusion_meta.get("modelName", "Late Fusion")),
@@ -416,7 +466,7 @@ def build_analysis_response(
         frameRisks=_to_frame_risks(fused_frame_risks) or None,
         clipRisks=_to_clip_risks(temporal.clip_risks) or None,
         pairRisks=_to_pair_risks(optical.pair_risks) or None,
-        suspiciousSegments=_to_segments(cnn.suspicious_segments) or None,
+        suspiciousSegments=_to_segments(fused_segments) or None,
         temporalSuspiciousSegments=_to_segments(temporal.temporal_suspicious_segments) or None,
         opticalSuspiciousSegments=_to_segments(optical.optical_suspicious_segments) or None,
         moduleTimelines=module_timelines,

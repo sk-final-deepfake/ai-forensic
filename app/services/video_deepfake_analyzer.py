@@ -61,19 +61,93 @@ TEMPORAL_UNAVAILABLE_STATUSES = frozenset(
 )
 
 SOFT_INCONCLUSIVE_MESSAGES = {
-    "NO_HUMAN_FACE": (
-        "사람 얼굴이 검출되지 않아 딥페이크 판별을 수행할 수 없습니다. "
-        "위변조 등 후속 분석은 계속 진행할 수 있습니다."
-    ),
-    "FACE_TOO_SMALL": (
-        "검출된 얼굴이 너무 작아(전신·원거리 등) 신뢰 가능한 딥페이크 판별을 보류합니다. "
-        "위변조 등 후속 분석은 계속 진행할 수 있습니다."
-    ),
-    "INSUFFICIENT_FACE_SAMPLES": (
-        "분석에 쓸 수 있는 얼굴 프레임이 부족하여 딥페이크 판별을 보류합니다. "
-        "위변조 등 후속 분석은 계속 진행할 수 있습니다."
-    ),
+    "NO_HUMAN_FACE": "사람 얼굴이 검출되지 않아 딥페이크 판별을 수행할 수 없습니다.",
+    "FACE_TOO_SMALL": "검출된 얼굴이 너무 작아(전신·원거리 등) 신뢰 가능한 딥페이크 판별을 보류합니다.",
+    "INSUFFICIENT_FACE_SAMPLES": "분석에 쓸 수 있는 얼굴 프레임이 부족하여 딥페이크 판별을 보류합니다.",
 }
+
+FORGERY_RAN_NOTE = "위변조(TruFor) 공간 분석을 이어서 수행했습니다."
+FORGERY_SKIPPED_NOTE = "위변조(TruFor)는 가중치 또는 vendor가 없어 생략되었습니다."
+FORGERY_ERROR_NOTE = "위변조(TruFor) 실행 중 오류가 발생해 생략되었습니다."
+
+
+def _forgery_continuation_note(forgery: ModuleInferResult | None) -> str:
+    if forgery is None:
+        return FORGERY_SKIPPED_NOTE
+    if forgery.status == "ok" and forgery.fake_score is not None:
+        return FORGERY_RAN_NOTE
+    if forgery.status in {"skipped_unavailable", "skipped"}:
+        return FORGERY_SKIPPED_NOTE
+    return FORGERY_ERROR_NOTE
+
+
+def _module_run_to_infer_result(module: Any) -> ModuleInferResult:
+    """Adapt gpu_worker ModuleRunResult → ModuleInferResult for soft-gate forgery."""
+    raw = getattr(module, "raw", None) or {}
+    return ModuleInferResult(
+        module=str(getattr(module, "module", "forgery_spatial")),
+        model_name=str(getattr(module, "model_name", "TruFor")),
+        model_version=str(getattr(module, "model_version", "v1.0.0")),
+        status=str(raw.get("status", "ok")),
+        fake_score=raw.get("fake_score", getattr(module, "video_score", None)),
+        pred_label="fake" if getattr(module, "detected", False) else "real",
+        details={
+            "threshold": getattr(module, "threshold", 0.515),
+            "frame_risks": getattr(module, "frame_risks", []) or [],
+            "suspicious_segments": getattr(module, "suspicious_segments", []) or [],
+            "raw": raw,
+        },
+    )
+
+
+def _try_run_forgery_spatial(
+    video_path: Path,
+    *,
+    work_dir: Path | None = None,
+) -> ModuleInferResult | None:
+    """Best-effort TruFor on soft face-gate. Never raises."""
+    try:
+        from gpu_worker.config import load_config
+        from gpu_worker.pipeline.module_infer import run_trufor_module
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("TruFor soft-continuation unavailable (import): %s", exc)
+        return ModuleInferResult(
+            module="forgery_spatial",
+            model_name="TruFor",
+            model_version="v1.0.0",
+            status="skipped_unavailable",
+            fake_score=None,
+            pred_label=None,
+            details={"message": str(exc)},
+        )
+    try:
+        if not video_path.is_file():
+            return ModuleInferResult(
+                module="forgery_spatial",
+                model_name="TruFor",
+                model_version="v1.0.0",
+                status="skipped",
+                fake_score=None,
+                pred_label=None,
+                details={"message": f"video not found: {video_path}"},
+            )
+        cfg = load_config()
+        forgery_work = None
+        if work_dir is not None:
+            forgery_work = work_dir / "trufor"
+        result = run_trufor_module(video_path, cfg, work_dir=forgery_work)
+        return _module_run_to_infer_result(result)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("TruFor soft-continuation failed for %s", video_path)
+        return ModuleInferResult(
+            module="forgery_spatial",
+            model_name="TruFor",
+            model_version="v1.0.0",
+            status="error",
+            fake_score=None,
+            pred_label=None,
+            details={"message": str(exc)},
+        )
 
 
 def _to_per_frame_face_scores(rows: list[dict[str, Any]]) -> list[PerFrameFaceScoreItem]:
@@ -176,37 +250,85 @@ def _inconclusive_soft_response(
     error_code: str,
     blocked_modules: list[str],
     frames_sampled: int | None = None,
+    forgery: ModuleInferResult | None = None,
 ) -> AnalysisResponseMessage:
-    """Soft-complete so downstream forgery/integrity stages can still run."""
+    """Soft-complete and attach best-effort forgery_spatial (TruFor) when available."""
     detail = f" sampled_frames={frames_sampled}" if frames_sampled is not None else ""
+    forgery_note = _forgery_continuation_note(forgery)
     base = SOFT_INCONCLUSIVE_MESSAGES.get(
         error_code,
-        "딥페이크 판별을 수행할 수 없습니다. 위변조 등 후속 분석은 계속 진행할 수 있습니다.",
+        "딥페이크 판별을 수행할 수 없습니다.",
     )
-    message = f"{base} (modules={','.join(blocked_modules)}{detail})"
+    message = f"{base} {forgery_note} (modules={','.join(blocked_modules)}{detail})"
     reasons = [f"{error_code}: 딥페이크 모델 판단 보류", message]
     version = f"inconclusive-{error_code.lower().replace('_', '-')}"
+
+    model_scores = [
+        ModelScoreItem(
+            moduleName="deepfake",
+            detected=False,
+            score=0.0,
+            modelName=FUSION_MODEL_NAME,
+            modelVersion=version,
+        )
+    ]
+    module_timelines: list[ModuleTimelineItem] = []
+    frame_edit_detected = False
+    frame_edit_score = 0.0
+
+    if forgery is not None and forgery.status == "ok" and forgery.fake_score is not None:
+        threshold = 0.515
+        if isinstance(forgery.details, dict) and forgery.details.get("threshold") is not None:
+            threshold = float(forgery.details["threshold"])
+        score = round(float(forgery.fake_score), 6)
+        detected = score >= threshold
+        model_scores.append(
+            ModelScoreItem(
+                moduleName="forgery_spatial",
+                detected=detected,
+                score=score,
+                modelName=forgery.model_name,
+                modelVersion=forgery.model_version,
+            )
+        )
+        frame_risks_raw = []
+        segments_raw = []
+        if isinstance(forgery.details, dict):
+            frame_risks_raw = forgery.details.get("frame_risks") or []
+            segments_raw = forgery.details.get("suspicious_segments") or []
+        module_timelines.append(
+            ModuleTimelineItem(
+                module="forgery_spatial",
+                modelName=forgery.model_name,
+                modelVersion=forgery.model_version,
+                videoScore=score,
+                threshold=threshold,
+                detected=detected,
+                frameRisks=[FrameRiskItem(**row) for row in frame_risks_raw],
+                suspiciousSegments=[SuspiciousSegmentItem(**row) for row in segments_raw],
+            )
+        )
+        frame_edit_detected = detected
+        frame_edit_score = score
+        reasons.append(f"forgery_spatial: TruFor score={score:.4f} detected={detected}")
+    else:
+        reasons.append(forgery_note)
+
     video_result = AnalysisVideoResultItem(
         deepfakeDetected=False,
         deepfakeScore=0.0,
+        frameEditDetected=frame_edit_detected,
+        frameEditScore=frame_edit_score,
         frameRisks=[],
         clipRisks=[],
         pairRisks=[],
         suspiciousSegments=[],
         temporalSuspiciousSegments=[],
         opticalSuspiciousSegments=[],
-        moduleTimelines=[],
+        moduleTimelines=module_timelines,
         modelName=FUSION_MODEL_NAME,
         modelVersion=version,
-        modelScores=[
-            ModelScoreItem(
-                moduleName="deepfake",
-                detected=False,
-                score=0.0,
-                modelName=FUSION_MODEL_NAME,
-                modelVersion=version,
-            )
-        ],
+        modelScores=model_scores,
         evidence=reasons,
         representativeFrames=[],
         overlayVideoUrl=None,
@@ -383,11 +505,15 @@ def build_response_from_modules(
         )
     if cnn is None or s_cnn is None or cnn_gate is not None:
         error_code = cnn_gate or "NO_HUMAN_FACE"
+        forgery = by_module.get("forgery_spatial")
+        if forgery is None:
+            forgery = _try_run_forgery_spatial(video_path, work_dir=work_dir)
         return _inconclusive_soft_response(
             request,
             error_code=error_code,
-            blocked_modules=["cnn"],
+            blocked_modules=["cnn", "forgery_spatial"],
             frames_sampled=frames_sampled,
+            forgery=forgery,
         )
 
     soft_error_code: str | None = None

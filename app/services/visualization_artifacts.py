@@ -491,9 +491,12 @@ def _build_overlay_video(
     work_dir: Path,
     evidence_id: int,
     analysis_request_id: int,
+    upload_name: str | None = None,
 ) -> str | None:
     if os.getenv("AI_VISUALIZATION_OVERLAY", "1").lower() in {"0", "false", "no"}:
         return None
+
+    work_dir.mkdir(parents=True, exist_ok=True)
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -578,5 +581,5 @@ def _build_overlay_video(
         playable_overlay,
         evidence_id=evidence_id,
         analysis_request_id=analysis_request_id,
-        name=overlay_path.name,
+        name=upload_name or overlay_path.name,
     )

@@ -16,12 +16,14 @@ from app.schemas.ai_response import (
     AnalysisVideoResultItem,
     ClipRiskItem,
     FrameRiskItem,
+    ModelOverlayArtifactItem,
     ModelScoreItem,
     ModuleTimelineItem,
     PairRiskItem,
     RepresentativeFrameItem,
     SuspiciousSegmentItem,
 )
+from app.services.module_overlays import build_module_overlay_set
 from app.services.visualization_artifacts import build_visualization_artifacts
 from app.schemas.analysis import AnalysisRequest
 from app.services.infer_bridge import InferRuntime, ModuleInferResult
@@ -334,18 +336,38 @@ def build_response_from_modules(
 
     representative_frames: list[RepresentativeFrameItem] = []
     overlay_video_url: str | None = None
-    if work_dir is not None and (fused_per_frame or per_frame) and video_path.is_file():
+    model_overlay_artifacts: list[ModelOverlayArtifactItem] = []
+    if work_dir is not None and video_path.is_file():
         try:
-            viz = build_visualization_artifacts(
+            # Representative frames still use fused scores when available.
+            if fused_per_frame or per_frame:
+                viz = build_visualization_artifacts(
+                    video_path=video_path,
+                    per_frame_scores=fused_per_frame or per_frame,
+                    evidence_id=_resolve_evidence_id(request),
+                    analysis_request_id=request.analysisRequestId,
+                    work_dir=work_dir / "visualization",
+                )
+                if viz is not None:
+                    representative_frames = [RepresentativeFrameItem(**row) for row in viz.representative_frames]
+
+            overlay_set = build_module_overlay_set(
                 video_path=video_path,
-                per_frame_scores=fused_per_frame or per_frame,
                 evidence_id=_resolve_evidence_id(request),
                 analysis_request_id=request.analysisRequestId,
-                work_dir=work_dir / "visualization",
+                work_dir=work_dir / "visualization" / "modules",
+                cnn_per_frame_scores=per_frame,
+                clip_risks=clip_risks_raw,
+                pair_risks=pair_risks_raw,
             )
-            if viz is not None:
-                representative_frames = [RepresentativeFrameItem(**row) for row in viz.representative_frames]
-                overlay_video_url = viz.overlay_video_url
+            overlay_video_url = overlay_set.legacy_cnn_overlay_url
+            model_overlay_artifacts = [
+                ModelOverlayArtifactItem(**row) for row in overlay_set.model_overlay_artifacts
+            ]
+            for timeline in module_timelines:
+                url = overlay_set.overlay_by_module.get(timeline.module)
+                if url:
+                    timeline.overlayVideoUrl = url
         except Exception:
             logger.exception(
                 "Failed to build visualization artifacts: evidenceId=%s analysisRequestId=%s",
@@ -369,6 +391,7 @@ def build_response_from_modules(
         evidence=reasons,
         representativeFrames=representative_frames,
         overlayVideoUrl=overlay_video_url,
+        modelOverlayArtifacts=model_overlay_artifacts,
     )
 
     return AnalysisResponseMessage(

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.services.late_fusion import build_fused_per_frame_scores, collapse_frame_risks_by_frame
+from app.services.module_overlays import build_module_overlay_set
 from app.services.visualization_artifacts import build_visualization_artifacts
 from gpu_worker.config import WorkerConfig
 from gpu_worker.pipeline.fusion import FusionResult, apply_late_fusion, load_fusion_config
@@ -23,6 +24,7 @@ from gpu_worker.schemas import (
     ClipRiskItem,
     FaceBBoxItem,
     FrameRiskItem,
+    ModelOverlayArtifactItem,
     ModelScoreItem,
     ModuleTimelineItem,
     PairRiskItem,
@@ -343,6 +345,7 @@ def build_analysis_response(
     fusion_meta = _model_meta(fusion_config, "fusion")
     representative_frames = None
     overlay_video_url = None
+    model_overlay_artifacts: list[ModelOverlayArtifactItem] = []
     fused_visualization_scores: list[dict[str, Any]] = []
 
     try:
@@ -356,20 +359,6 @@ def build_analysis_response(
             visualization_scores = _to_visualization_scores(cnn.frame_risks)
         if not visualization_scores:
             visualization_scores = _fallback_visualization_scores(video_path, fusion.score, fps)
-            logger.info(
-                "Using fallback visualization scores: evidenceId=%s analysisRequestId=%s score=%s points=%s",
-                evidence_id,
-                analysis_request_id,
-                fusion.score,
-                len(visualization_scores),
-            )
-        else:
-            logger.info(
-                "Using fused per-face scores for visualization: evidenceId=%s analysisRequestId=%s points=%s",
-                evidence_id,
-                analysis_request_id,
-                len(visualization_scores),
-            )
 
         viz = build_visualization_artifacts(
             video_path=video_path,
@@ -382,21 +371,31 @@ def build_analysis_response(
             representative_frames = [
                 RepresentativeFrameItem(**row) for row in viz.representative_frames
             ]
-            overlay_video_url = viz.overlay_video_url
-            logger.info(
-                "Visualization artifacts attached: evidenceId=%s analysisRequestId=%s frames=%s overlay=%s",
-                evidence_id,
-                analysis_request_id,
-                len(representative_frames or []),
-                bool(overlay_video_url),
-            )
-        else:
-            logger.warning(
-                "Visualization artifact builder returned no artifacts: evidenceId=%s analysisRequestId=%s points=%s",
-                evidence_id,
-                analysis_request_id,
-                len(visualization_scores),
-            )
+
+        overlay_set = build_module_overlay_set(
+            video_path=video_path,
+            evidence_id=evidence_id,
+            analysis_request_id=analysis_request_id,
+            work_dir=cfg.work_dir / "visualization" / f"{evidence_id}_{analysis_request_id}" / "modules",
+            cnn_per_frame_scores=_module_per_frame_scores(cnn),
+            clip_risks=temporal.clip_risks,
+            pair_risks=optical.pair_risks,
+        )
+        overlay_video_url = overlay_set.legacy_cnn_overlay_url
+        model_overlay_artifacts = [
+            ModelOverlayArtifactItem(**row) for row in overlay_set.model_overlay_artifacts
+        ]
+        for timeline in module_timelines:
+            url = overlay_set.overlay_by_module.get(timeline.module)
+            if url:
+                timeline.overlayVideoUrl = url
+        logger.info(
+            "Module overlays attached: evidenceId=%s cnn=%s temporal=%s optical=%s",
+            evidence_id,
+            bool(overlay_set.overlay_by_module.get("cnn")),
+            bool(overlay_set.overlay_by_module.get("temporal")),
+            bool(overlay_set.overlay_by_module.get("optical")),
+        )
     except Exception:
         logger.exception(
             "Failed to build visualization artifacts: evidenceId=%s analysisRequestId=%s",
@@ -424,6 +423,7 @@ def build_analysis_response(
         modelScores=model_scores,
         representativeFrames=representative_frames,
         overlayVideoUrl=overlay_video_url,
+        modelOverlayArtifacts=model_overlay_artifacts or None,
         perFrameFaceScores=_to_per_frame_face_score_items(fused_visualization_scores)
         if fused_visualization_scores
         else None,

@@ -64,6 +64,16 @@ class ModuleTimelineItem(BaseModel):
     clipRisks: list[ClipRiskItem] | None = None
     pairRisks: list[PairRiskItem] | None = None
     suspiciousSegments: list[SuspiciousSegmentItem] | None = None
+    overlayVideoUrl: str | None = None
+
+
+class ModelOverlayArtifactItem(BaseModel):
+    key: str
+    category: Literal["deepfake", "forgery"] = "deepfake"
+    label: str
+    overlayVideoUrl: str | None = None
+    status: Literal["ready", "pending", "unsupported"] | None = "pending"
+    description: str | None = None
 
 
 class ModelScoreItem(BaseModel):
@@ -123,6 +133,7 @@ class AnalysisVideoResultItem(BaseModel):
     representativeFrames: list[RepresentativeFrameItem] | None = None
     overlayVideoUrl: str | None = None
     perFrameFaceScores: list[PerFrameFaceScoreItem] | None = None
+    modelOverlayArtifacts: list[ModelOverlayArtifactItem] | None = None
 
 
 class AnalysisResponseMessage(BaseModel):

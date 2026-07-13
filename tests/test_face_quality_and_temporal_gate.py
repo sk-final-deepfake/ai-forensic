@@ -87,6 +87,8 @@ class FaceQualityAndTemporalGateTests(unittest.TestCase):
         self.assertEqual(response.status, "COMPLETED")
         self.assertEqual(response.errorCode, "FACE_TOO_SMALL")
         self.assertIn("작", response.message or "")
+        self.assertIn("위변조", response.message or "")
+        self.assertNotEqual(response.status, "FAILED")
 
     def test_temporal_unavailable_does_not_become_no_human(self) -> None:
         from app.services.late_fusion import load_fusion_config

@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-ModuleKind = Literal["cnn", "temporal", "optical"]
+ModuleKind = Literal["cnn", "temporal", "optical", "forgery_spatial", "forgery_temporal"]
 
 
 class FrameRiskItem(BaseModel):

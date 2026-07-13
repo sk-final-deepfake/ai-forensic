@@ -97,6 +97,12 @@ class WorkerConfig:
     max_frames: int = int(_env("INFERENCE_MAX_FRAMES", "32"))
     deepfake_threshold: float = float(_env("DEEPFAKE_THRESHOLD", "0.5"))
 
+    # Soft-gate forgery continuation (TruFor spatial) — best-effort, never hard-fails the job.
+    trufor_weights: str = _env("TRUFOR_WEIGHTS", "models/test/spatial/trufor/v1.0.0/trufor.pth.tar")
+    trufor_experiment: str = _env("TRUFOR_EXPERIMENT", "trufor_ph3")
+    trufor_frames_per_video: int = int(_env("TRUFOR_FRAMES_PER_VIDEO", "8"))
+    trufor_threshold: float = float(_env("TRUFOR_THRESHOLD", "0.515"))
+
     prefetch_count: int = 1
 
 

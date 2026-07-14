@@ -1,11 +1,12 @@
 from contextlib import asynccontextmanager
 import logging
+import os
 
 from fastapi import FastAPI
 
 from app.consumer import AnalysisConsumer
 from app.core.config import settings
-from app.routers import analyze, health, infer
+from app.routers import health
 
 logger = logging.getLogger("ai_fastapi")
 
@@ -40,5 +41,10 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title=settings.ai_server_name, lifespan=lifespan)
 
 app.include_router(health.router)
-app.include_router(analyze.router)
-app.include_router(infer.router)
+
+# Full local/GPU gateway image only; EKS consumer sets AI_CONSUMER_ONLY=1.
+if os.getenv("AI_CONSUMER_ONLY", "0").lower() not in {"1", "true", "yes"}:
+    from app.routers import analyze, infer
+
+    app.include_router(analyze.router)
+    app.include_router(infer.router)

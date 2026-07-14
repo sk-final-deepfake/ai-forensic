@@ -1,0 +1,8 @@
+# Method B EKS ai-fastapi: RabbitMQ consumer + GPU /infer HTTP client only.
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+httpx
+pika
+boto3

@@ -17,9 +17,12 @@ from app.schemas.messaging import (
     PerFrameFaceScoreItem,
     RepresentativeFrameItem,
 )
-from app.services.visualization_artifacts import build_visualization_artifacts
 
 logger = logging.getLogger(__name__)
+
+
+def _visualization_enabled() -> bool:
+    return os.getenv("AI_VISUALIZATION_ENABLED", "1").lower() not in {"0", "false", "no"}
 
 _S3_URI = re.compile(r"^s3://([^/]+)/(.+)$")
 
@@ -92,6 +95,8 @@ def build_visualization_payload(
 ) -> dict[str, Any] | None:
     if not per_frame_scores or not video_path.is_file():
         return None
+
+    from app.services.visualization_artifacts import build_visualization_artifacts
 
     viz = build_visualization_artifacts(
         video_path=video_path,
@@ -207,6 +212,14 @@ def attach_visualization_artifacts(
     response: AnalysisResponseMessage,
 ) -> AnalysisResponseMessage:
     if response.status != "COMPLETED" or not response.results:
+        return response
+
+    if not _visualization_enabled():
+        logger.info(
+            "Visualization skipped: disabled by AI_VISUALIZATION_ENABLED analysisRequestId=%s evidenceId=%s",
+            job.analysisRequestId,
+            job.evidenceId,
+        )
         return response
 
     video = response.results[0]

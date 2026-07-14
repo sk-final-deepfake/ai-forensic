@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -105,6 +106,41 @@ class ResponseVisualizationTests(unittest.TestCase):
         )
         updated = attach_visualization_artifacts(job, response)
         self.assertEqual(updated.results[0].overlayVideoUrl, "https://cdn.example/overlay.mp4")
+
+    @patch("app.services.response_visualization.build_visualization_payload")
+    @patch("app.services.response_visualization.download_messaging_job_video")
+    def test_attach_visualization_skips_when_disabled(
+        self,
+        mock_download: unittest.mock.Mock,
+        mock_payload: unittest.mock.Mock,
+    ) -> None:
+        job = AnalysisJobMessage(
+            analysisRequestId=50,
+            evidenceId=60,
+            filePath="evidence.mp4",
+        )
+        response = AnalysisResponseMessage(
+            analysisRequestId=50,
+            evidenceId=60,
+            status="COMPLETED",
+            analyzedAt="2026-07-14T00:00:00Z",
+            results=[
+                AnalysisVideoResultItem(
+                    deepfakeDetected=True,
+                    deepfakeScore=0.8,
+                    perFrameFaceScores=[
+                        PerFrameFaceScoreItem(frameIndex=1, faceIndex=0, riskScore=0.5),
+                    ],
+                )
+            ],
+        )
+
+        with patch.dict(os.environ, {"AI_VISUALIZATION_ENABLED": "0"}, clear=False):
+            updated = attach_visualization_artifacts(job, response)
+
+        self.assertIsNone(updated.results[0].overlayVideoUrl)
+        mock_download.assert_not_called()
+        mock_payload.assert_not_called()
 
     @patch("app.services.response_visualization.build_visualization_payload")
     @patch("app.services.response_visualization.download_messaging_job_video")

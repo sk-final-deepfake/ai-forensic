@@ -27,17 +27,34 @@ MODULE_META = {
     "cnn": {
         "key": "deepfake:cnn",
         "label": "Xception",
+        "category": "deepfake",
         "description": "프레임별 얼굴 경계와 위험 점수를 영상 위에 표시합니다.",
+        "banner_label": "Xception",
+        "filename": "overlay_cnn.mp4",
     },
     "temporal": {
         "key": "deepfake:temporal",
         "label": "TimeSformer",
-        "description": "시계열 이상이 감지된 클립 구간을 영상 위에 표시합니다.",
+        "category": "deepfake",
+        "description": "시계열 이상이 감지된 클립 구간을 상단 배너와 화면 테두리로 표시합니다.",
+        "banner_label": "TimeSformer",
+        "filename": "overlay_temporal.mp4",
     },
     "optical": {
         "key": "deepfake:optical",
         "label": "GMFlow",
-        "description": "연속 프레임쌍의 optical flow 이상을 영상 위에 표시합니다.",
+        "category": "deepfake",
+        "description": "optical flow 이상이 높은 구간을 상단 배너와 화면 테두리로 표시합니다.",
+        "banner_label": "GMFlow",
+        "filename": "overlay_optical.mp4",
+    },
+    "forgery_spatial": {
+        "key": "forgery:forgery_spatial",
+        "label": "TruFor",
+        "category": "forgery",
+        "description": "국소 위변조 이상 구간을 상단 배너와 화면 테두리로 표시합니다.",
+        "banner_label": "TruFor",
+        "filename": "overlay_forgery_spatial.mp4",
     },
 }
 
@@ -115,7 +132,7 @@ def build_module_overlay_set(
     artifacts = [
         {
             "key": MODULE_META[module]["key"],
-            "category": "deepfake",
+            "category": MODULE_META[module]["category"],
             "label": MODULE_META[module]["label"],
             "overlayVideoUrl": urls.get(module),
             "status": "ready" if urls.get(module) else "pending",
@@ -130,17 +147,140 @@ def build_module_overlay_set(
     )
 
 
+def build_single_module_overlay(
+    *,
+    module: str,
+    video_path: Path,
+    evidence_id: int,
+    analysis_request_id: int,
+    work_dir: Path,
+    cnn_per_frame_scores: list[dict[str, Any]] | None = None,
+    clip_risks: list[dict[str, Any]] | None = None,
+    pair_risks: list[dict[str, Any]] | None = None,
+    frame_risks: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Build one module overlay MP4 for on-demand jobs. Returns artifact dict or None."""
+    meta = MODULE_META.get(module)
+    if meta is None:
+        raise ValueError(f"Unsupported overlay module: {module}")
+    if not _enabled():
+        return None
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+    url: str | None = None
+
+    if module == "cnn":
+        ensure_infer_scripts_on_path()
+        from face_crop import create_face_cropper
+
+        cropper = create_face_cropper(
+            method="yunet",
+            padding=0.3,
+            square=True,
+            human_only=True,
+            yunet_score_threshold=_overlay_yunet_threshold(),
+            min_face_side_px=1,
+        )
+        try:
+            scores = cnn_per_frame_scores or _frame_risks_to_score_rows(frame_risks or [])
+            if scores:
+                url = _build_overlay_video(
+                    video_path=video_path,
+                    faces_by_frame=_score_map_by_frame(scores),
+                    cropper=cropper,
+                    work_dir=work_dir / "cnn",
+                    evidence_id=evidence_id,
+                    analysis_request_id=analysis_request_id,
+                    upload_name=meta["filename"],
+                )
+        finally:
+            cropper.close()
+    elif module == "temporal":
+        url = _build_segment_overlay_video(
+            video_path=video_path,
+            frame_scores=_clip_risks_to_frame_scores(clip_risks or []),
+            work_dir=work_dir / "temporal",
+            evidence_id=evidence_id,
+            analysis_request_id=analysis_request_id,
+            filename=meta["filename"],
+            banner_label=meta["banner_label"],
+        )
+    elif module == "optical":
+        url = _build_segment_overlay_video(
+            video_path=video_path,
+            frame_scores=_pair_risks_to_frame_scores(pair_risks or []),
+            work_dir=work_dir / "optical",
+            evidence_id=evidence_id,
+            analysis_request_id=analysis_request_id,
+            filename=meta["filename"],
+            banner_label=meta["banner_label"],
+        )
+    else:  # forgery_spatial
+        url = _build_segment_overlay_video(
+            video_path=video_path,
+            frame_scores=_frame_risks_to_frame_scores(frame_risks or []),
+            work_dir=work_dir / "forgery_spatial",
+            evidence_id=evidence_id,
+            analysis_request_id=analysis_request_id,
+            filename=meta["filename"],
+            banner_label=meta["banner_label"],
+        )
+
+    return {
+        "key": meta["key"],
+        "category": meta["category"],
+        "label": meta["label"],
+        "overlayVideoUrl": url,
+        "status": "ready" if url else "pending",
+        "description": meta["description"],
+        "module": module,
+    }
+
+
+def _frame_risks_to_score_rows(frame_risks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in frame_risks:
+        frame_index = row.get("frameIndex", row.get("frame_index"))
+        score = row.get("riskScore", row.get("fake_score"))
+        if frame_index is None or score is None:
+            continue
+        entry: dict[str, Any] = {
+            "frame_index": int(frame_index),
+            "fake_score": float(score),
+        }
+        if row.get("bbox") is not None:
+            entry["bbox"] = row["bbox"]
+        if row.get("faceIndex") is not None:
+            entry["face_index"] = int(row["faceIndex"])
+        if row.get("face_index") is not None:
+            entry["face_index"] = int(row["face_index"])
+        rows.append(entry)
+    return rows
+
+
+def _frame_risks_to_frame_scores(frame_risks: list[dict[str, Any]]) -> dict[int, float]:
+    scores: dict[int, float] = {}
+    for row in frame_risks:
+        frame_index = row.get("frameIndex", row.get("frame_index"))
+        score = row.get("riskScore", row.get("fake_score"))
+        if frame_index is None or score is None:
+            continue
+        idx = int(frame_index)
+        scores[idx] = max(scores.get(idx, 0.0), float(score))
+    return scores
+
+
 def _empty_set() -> ModuleOverlaySet:
     artifacts = [
         {
             "key": MODULE_META[module]["key"],
-            "category": "deepfake",
+            "category": MODULE_META[module]["category"],
             "label": MODULE_META[module]["label"],
             "overlayVideoUrl": None,
             "status": "pending",
             "description": MODULE_META[module]["description"],
         }
-        for module in ("cnn", "temporal", "optical")
+        for module in ("cnn", "temporal", "optical", "forgery_spatial")
     ]
     return ModuleOverlaySet({}, artifacts, None)
 

@@ -57,9 +57,11 @@ class WorkerConfig:
     rabbit_vhost: str = _env("RABBITMQ_VHOST", "/")
 
     analysis_queue: str = "forenshield.analysis.queue"
+    overlay_queue: str = _env("OVERLAY_QUEUE", "forenshield.overlay.queue")
     result_queue: str = "backend.ai.result.queue"
     result_exchange: str = _env("AI_RESULT_EXCHANGE", "ai.result.exchange")
     result_routing_key: str = _env("AI_RESULT_ROUTING_KEY", "result.video")
+    overlay_result_routing_key: str = _env("AI_OVERLAY_RESULT_ROUTING_KEY", "result.overlay")
 
     aws_region: str = _env("AWS_REGION", "ap-northeast-2")
     evidence_bucket: str = _env("S3_EVIDENCE_BUCKET", "")

@@ -155,3 +155,38 @@ class AnalysisResponseMessage(BaseModel):
     errorCode: str | None = None
     message: str | None = None
     modelScores: list[ModelScoreItem] | None = None
+
+
+class OverlayJobMessage(BaseModel):
+    """On-demand module overlay generation job (BE → AI)."""
+
+    jobType: Literal["OVERLAY"] = "OVERLAY"
+    overlayJobId: int
+    analysisRequestId: int
+    evidenceId: int
+    module: Literal["cnn", "temporal", "optical", "forgery_spatial"]
+    filePath: str
+    s3ObjectKey: str | None = None
+    s3Bucket: str | None = None
+    s3Region: str | None = None
+    presignedDownloadUrl: str | None = None
+    frameRisks: list[FrameRiskItem] | None = None
+    clipRisks: list[ClipRiskItem] | None = None
+    pairRisks: list[PairRiskItem] | None = None
+    requestedAt: str | None = None
+
+
+class OverlayResultMessage(BaseModel):
+    """On-demand overlay progress/result (AI → BE)."""
+
+    jobType: Literal["OVERLAY"] = "OVERLAY"
+    overlayJobId: int
+    analysisRequestId: int
+    evidenceId: int
+    module: str
+    status: Literal["IN_PROGRESS", "COMPLETED", "FAILED"]
+    progressPercent: int | None = None
+    overlayVideoUrl: str | None = None
+    analyzedAt: str
+    errorCode: str | None = None
+    message: str | None = None

@@ -364,6 +364,7 @@ def build_visualization_artifacts(
     evidence_id: int,
     analysis_request_id: int,
     work_dir: Path,
+    include_overlay_video: bool = True,
 ) -> VisualizationArtifacts | None:
     if not _enabled():
         logger.warning(
@@ -453,14 +454,16 @@ def build_visualization_artifacts(
                 }
             )
 
-        overlay_video_url = _build_overlay_video(
-            video_path=video_path,
-            faces_by_frame=_score_map_by_frame(per_frame_scores),
-            cropper=cropper,
-            work_dir=work_dir,
-            evidence_id=evidence_id,
-            analysis_request_id=analysis_request_id,
-        )
+        overlay_video_url = None
+        if include_overlay_video:
+            overlay_video_url = _build_overlay_video(
+                video_path=video_path,
+                faces_by_frame=_score_map_by_frame(per_frame_scores),
+                cropper=cropper,
+                work_dir=work_dir,
+                evidence_id=evidence_id,
+                analysis_request_id=analysis_request_id,
+            )
 
         if not representative_frames and overlay_video_url is None:
             logger.warning(

@@ -496,14 +496,14 @@ def build_analysis_response(
     if cnn_error is not None or (cnn.raw or {}).get("fake_score") is None:
         breakdown = (cnn.raw or {}).get("score_breakdown") or {}
         # Soft advisory only — still run TruFor spatial best-effort in the same response.
-        _report_progress(on_progress, 55, "위변조(TruFor) 공간 분석 중")
+        _report_progress(on_progress, 84, "위변조(TruFor) 공간 분석 중")
         forgery = run_trufor_module(
             video_path,
             cfg,
             fps=fps,
             work_dir=cfg.work_dir / "trufor" / f"{evidence_id}_{analysis_request_id}",
         )
-        _report_progress(on_progress, 90, "위변조 분석 정리 중")
+        _report_progress(on_progress, 95, "위변조 분석 정리 중")
         logger.info(
             "Soft face-gate → forgery continuation: evidenceId=%s errorCode=%s forgery_status=%s",
             evidence_id,
@@ -543,7 +543,7 @@ def build_analysis_response(
 
     _report_progress(on_progress, 65, "GMFlow 광학 흐름 분석 중")
     optical = run_gmflow_module(video_path, cfg, threshold=thresholds["optical"], fps=fps)
-    _report_progress(on_progress, 78, "GMFlow 완료 · 융합 계산 중")
+    _report_progress(on_progress, 78, "GMFlow 완료 · 위험도 융합 중")
     modules = {"cnn": cnn, "temporal": temporal, "optical": optical}
 
     module_meta = {key: _model_meta(fusion_config, key) for key in modules}
@@ -563,6 +563,7 @@ def build_analysis_response(
             risk_level=fusion.risk_level,
             reasons=[soft_error_message, *fusion.reasons],
         )
+    _report_progress(on_progress, 82, "위험도 융합 완료")
 
     _report_progress(on_progress, 84, "위변조(TruFor) 공간 분석 중")
     forgery = run_trufor_module(
@@ -571,9 +572,8 @@ def build_analysis_response(
         fps=fps,
         work_dir=cfg.work_dir / "trufor" / f"{evidence_id}_{analysis_request_id}",
     )
-    forgery_note = _forgery_continuation_note(forgery)
-
     _report_progress(on_progress, 90, "대표 프레임 생성 중")
+    forgery_note = _forgery_continuation_note(forgery)
 
     model_scores = _build_model_scores(fusion, modules, fusion_config)
     module_timelines = _build_module_timelines(modules, fusion_config)

@@ -173,6 +173,20 @@ def _gpu_already_provided_module_overlays(video: AnalysisVideoResultItem) -> boo
     )
 
 
+def _gpu_ran_module_pipeline(video: AnalysisVideoResultItem) -> bool:
+    """True when GPU Method-B already produced deepfake module timelines.
+
+    Even if overlay encode OOM'd, falling back to EKS legacy overlay.mp4 takes
+    many minutes and races the serial prefetch=1 queue — skip it.
+    """
+    modules = {
+        str(timeline.module).strip().lower()
+        for timeline in (video.moduleTimelines or [])
+        if getattr(timeline, "module", None)
+    }
+    return "cnn" in modules and ("temporal" in modules or "optical" in modules)
+
+
 def _apply_visualization_payload(
     video: AnalysisVideoResultItem,
     payload: dict[str, Any],
@@ -199,6 +213,15 @@ def attach_visualization_artifacts(
     if _gpu_already_provided_module_overlays(video):
         logger.info(
             "Visualization skipped: GPU module overlays present analysisRequestId=%s evidenceId=%s",
+            job.analysisRequestId,
+            job.evidenceId,
+        )
+        return response
+
+    if _gpu_ran_module_pipeline(video):
+        logger.info(
+            "Visualization skipped: GPU module pipeline present (no EKS legacy fallback) "
+            "analysisRequestId=%s evidenceId=%s",
             job.analysisRequestId,
             job.evidenceId,
         )

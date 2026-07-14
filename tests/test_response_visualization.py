@@ -11,6 +11,7 @@ from app.schemas.messaging import (
     FaceBBoxItem,
     FrameRiskItem,
     ModelOverlayArtifactItem,
+    ModuleTimelineItem,
     PerFrameFaceScoreItem,
 )
 from app.services.response_visualization import (
@@ -159,6 +160,66 @@ class ResponseVisualizationTests(unittest.TestCase):
         updated = attach_visualization_artifacts(job, response)
         video = updated.results[0]
         self.assertEqual(video.modelOverlayArtifacts[1].overlayVideoUrl, "https://cdn.example/temporal.mp4")
+        mock_download.assert_not_called()
+        mock_payload.assert_not_called()
+
+    @patch("app.services.response_visualization.build_visualization_payload")
+    @patch("app.services.response_visualization.download_messaging_job_video")
+    def test_attach_visualization_skips_when_gpu_module_timelines_present(
+        self,
+        mock_download: unittest.mock.Mock,
+        mock_payload: unittest.mock.Mock,
+    ) -> None:
+        """GPU OOM may leave empty overlays; still skip expensive EKS legacy fallback."""
+        job = AnalysisJobMessage(
+            analysisRequestId=101,
+            evidenceId=257,
+            filePath="evidence.mp4",
+        )
+        response = AnalysisResponseMessage(
+            analysisRequestId=101,
+            evidenceId=257,
+            status="COMPLETED",
+            analyzedAt="2026-07-13T00:00:00Z",
+            results=[
+                AnalysisVideoResultItem(
+                    deepfakeDetected=True,
+                    deepfakeScore=0.7,
+                    perFrameFaceScores=[
+                        PerFrameFaceScoreItem(frameIndex=1, faceIndex=0, riskScore=0.6),
+                    ],
+                    moduleTimelines=[
+                        ModuleTimelineItem(
+                            module="cnn",
+                            modelName="Xception",
+                            modelVersion="v1",
+                            videoScore=0.7,
+                            threshold=0.5,
+                            detected=True,
+                        ),
+                        ModuleTimelineItem(
+                            module="temporal",
+                            modelName="TimeSformer",
+                            modelVersion="v1",
+                            videoScore=0.6,
+                            threshold=0.5,
+                            detected=True,
+                        ),
+                        ModuleTimelineItem(
+                            module="optical",
+                            modelName="GMFlow",
+                            modelVersion="v1",
+                            videoScore=0.5,
+                            threshold=0.4,
+                            detected=True,
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        updated = attach_visualization_artifacts(job, response)
+        self.assertIsNone(updated.results[0].overlayVideoUrl)
         mock_download.assert_not_called()
         mock_payload.assert_not_called()
 

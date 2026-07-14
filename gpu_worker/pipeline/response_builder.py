@@ -4,7 +4,9 @@ import logging
 import math
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+ProgressCallback = Callable[[int, str | None], None]
 
 from app.services.late_fusion import (
     build_fused_per_frame_scores,
@@ -421,6 +423,7 @@ def _soft_inconclusive_response(
         analysisRequestId=analysis_request_id,
         evidenceId=evidence_id,
         status="COMPLETED",
+        progressPercent=100,
         riskScore=0.0,
         confidenceScore=0.0,
         riskLevel="LOW",
@@ -461,12 +464,22 @@ def _cnn_status_to_error_code(status: str) -> str | None:
     return None
 
 
+def _report_progress(on_progress: ProgressCallback | None, percent: int, message: str | None = None) -> None:
+    if on_progress is None:
+        return
+    try:
+        on_progress(max(0, min(99, int(percent))), message)
+    except Exception:
+        logger.exception("Progress callback failed at percent=%s", percent)
+
+
 def build_analysis_response(
     *,
     analysis_request_id: int,
     evidence_id: int,
     video_path: Path,
     cfg: WorkerConfig,
+    on_progress: ProgressCallback | None = None,
 ) -> AnalysisResponseMessage:
     fusion_path = resolve_under_root(cfg, cfg.fusion_config_path)
     if not fusion_path.is_file():
@@ -476,18 +489,22 @@ def build_analysis_response(
     thresholds = _module_thresholds(fusion_config)
     fps = _video_fps(video_path)
 
+    _report_progress(on_progress, 18, "얼굴 영역 검출 및 Xception 분석 중")
     cnn = run_xception_module(video_path, cfg, threshold=thresholds["cnn"], fps=fps)
+    _report_progress(on_progress, 35, "Xception(CNN) 완료")
     cnn_status = str((cnn.raw or {}).get("status", "ok"))
     cnn_error = _cnn_status_to_error_code(cnn_status)
     if cnn_error is not None or (cnn.raw or {}).get("fake_score") is None:
         breakdown = (cnn.raw or {}).get("score_breakdown") or {}
         # Soft advisory only — still run TruFor spatial best-effort in the same response.
+        _report_progress(on_progress, 55, "위변조(TruFor) 공간 분석 중")
         forgery = run_trufor_module(
             video_path,
             cfg,
             fps=fps,
             work_dir=cfg.work_dir / "trufor" / f"{evidence_id}_{analysis_request_id}",
         )
+        _report_progress(on_progress, 90, "위변조 분석 정리 중")
         logger.info(
             "Soft face-gate → forgery continuation: evidenceId=%s errorCode=%s forgery_status=%s",
             evidence_id,
@@ -503,7 +520,9 @@ def build_analysis_response(
             forgery=forgery,
         )
 
+    _report_progress(on_progress, 42, "TimeSformer 시계열 분석 중")
     temporal = run_timesformer_module(video_path, cfg, threshold=thresholds["temporal"], fps=fps)
+    _report_progress(on_progress, 58, "TimeSformer 완료")
     temporal_status = str((temporal.raw or {}).get("status", "ok"))
     temporal_unavailable = (
         temporal_status in TEMPORAL_UNAVAILABLE_STATUSES
@@ -523,7 +542,9 @@ def build_analysis_response(
             temporal_status,
         )
 
+    _report_progress(on_progress, 65, "GMFlow 광학 흐름 분석 중")
     optical = run_gmflow_module(video_path, cfg, threshold=thresholds["optical"], fps=fps)
+    _report_progress(on_progress, 78, "GMFlow 완료 · 융합 계산 중")
     modules = {"cnn": cnn, "temporal": temporal, "optical": optical}
 
     module_meta = {key: _model_meta(fusion_config, key) for key in modules}
@@ -543,6 +564,7 @@ def build_analysis_response(
             risk_level=fusion.risk_level,
             reasons=[soft_error_message, *fusion.reasons],
         )
+    _report_progress(on_progress, 82, "위험도 융합 완료 · 오버레이 생성 중")
 
     model_scores = _build_model_scores(fusion, modules, fusion_config)
     module_timelines = _build_module_timelines(modules, fusion_config)
@@ -576,6 +598,7 @@ def build_analysis_response(
                 RepresentativeFrameItem(**row) for row in viz.representative_frames
             ]
 
+        _report_progress(on_progress, 88, "모듈별 오버레이 영상 생성 중")
         overlay_set = build_module_overlay_set(
             video_path=video_path,
             evidence_id=evidence_id,
@@ -593,6 +616,7 @@ def build_analysis_response(
             url = overlay_set.overlay_by_module.get(timeline.module)
             if url:
                 timeline.overlayVideoUrl = url
+        _report_progress(on_progress, 95, "결과 정리 중")
         logger.info(
             "Module overlays attached: evidenceId=%s cnn=%s temporal=%s optical=%s",
             evidence_id,
@@ -606,6 +630,7 @@ def build_analysis_response(
             evidence_id,
             analysis_request_id,
         )
+        _report_progress(on_progress, 95, "결과 정리 중")
 
     fused_frame_risks = collapse_frame_risks_by_frame(
         fused_visualization_scores or _module_per_frame_scores(cnn),
@@ -644,6 +669,7 @@ def build_analysis_response(
         analysisRequestId=analysis_request_id,
         evidenceId=evidence_id,
         status="COMPLETED",
+        progressPercent=100,
         riskScore=fusion.risk_score,
         confidenceScore=fusion.confidence,
         riskLevel=fusion.risk_level,  # type: ignore[arg-type]

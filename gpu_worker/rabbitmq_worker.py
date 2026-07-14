@@ -46,9 +46,10 @@ def publish_result(channel: pika.channel.Channel, cfg: WorkerConfig, message: An
         ),
     )
     logger.info(
-        "Published result analysisRequestId=%s status=%s frameRisks=%s -> %s/%s",
+        "Published result analysisRequestId=%s status=%s progress=%s frameRisks=%s -> %s/%s",
         message.analysisRequestId,
         message.status,
+        message.progressPercent,
         len(message.results[0].frameRisks) if message.results and message.results[0].frameRisks else 0,
         cfg.result_exchange,
         cfg.result_routing_key,
@@ -63,10 +64,29 @@ def process_job(channel: pika.channel.Channel, cfg: WorkerConfig, body: bytes) -
         job.evidenceId,
         job.filePath,
     )
+
+    def report_progress(percent: int, message: str | None = None) -> None:
+        publish_result(
+            channel,
+            cfg,
+            AnalysisResponseMessage(
+                analysisRequestId=job.analysisRequestId,
+                evidenceId=job.evidenceId,
+                status="IN_PROGRESS",
+                progressPercent=percent,
+                message=message,
+                analyzedAt=_utc_now(),
+            ),
+        )
+
+    report_progress(5, "영상 다운로드 중")
     local_path = download_job_file(job, cfg)
     logger.info("Downloaded to %s", local_path)
+    report_progress(12, "모델 추론 준비 중")
     try:
-        result = run_inference(job, local_path, cfg)
+        result = run_inference(job, local_path, cfg, on_progress=report_progress)
+        if result.status == "COMPLETED" and result.progressPercent is None:
+            result.progressPercent = 100
         publish_result(channel, cfg, result)
     except Exception as exc:
         logger.exception("Inference failed analysisRequestId=%s", job.analysisRequestId)

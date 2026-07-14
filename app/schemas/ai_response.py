@@ -130,7 +130,9 @@ class AnalysisVideoResultItem(BaseModel):
 class AnalysisResponseMessage(BaseModel):
     analysisRequestId: int
     evidenceId: int
-    status: Literal["COMPLETED", "FAILED"]
+    status: Literal["IN_PROGRESS", "COMPLETED", "FAILED"]
+    # Mid-run 0~99; COMPLETED/FAILED may omit (BE sets 100 on complete).
+    progressPercent: int | None = None
     riskScore: float | None = None
     confidenceScore: float | None = None
     riskLevel: Literal["LOW", "MEDIUM", "HIGH"] | None = None

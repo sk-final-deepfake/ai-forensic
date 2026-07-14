@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
 
 import pika
 
 from app.core.config import Settings
 from app.schemas.messaging import AnalysisResponseMessage
-from gpu_worker.config import WorkerConfig
+
+if TYPE_CHECKING:
+    from gpu_worker.config import WorkerConfig
 
 logger = logging.getLogger("ai_fastapi.analysis_progress")
 
@@ -47,16 +50,24 @@ def publish_analysis_progress_with_channel(
         return
     payload = _build_message(analysis_request_id, evidence_id, percent, message)
     body = json.dumps(payload.model_dump(mode="json", exclude_none=True), ensure_ascii=False).encode("utf-8")
-    channel.basic_publish(
-        exchange=settings.result_exchange,
-        routing_key=settings.result_routing_key,
-        body=body,
-        properties=pika.BasicProperties(content_type="application/json", delivery_mode=2),
-    )
+    try:
+        channel.basic_publish(
+            exchange=settings.result_exchange,
+            routing_key=settings.result_routing_key,
+            body=body,
+            properties=pika.BasicProperties(content_type="application/json", delivery_mode=2),
+        )
+    except Exception:
+        logger.warning(
+            "Failed to publish analysis progress %s%% analysisRequestId=%s (channel)",
+            percent,
+            analysis_request_id,
+            exc_info=True,
+        )
 
 
 def publish_analysis_progress_with_config(
-    cfg: WorkerConfig,
+    cfg: WorkerConfig | Any,
     analysis_request_id: int,
     evidence_id: int,
     percent: int,

@@ -37,8 +37,21 @@ class GatingConfig:
     ambiguous_boost_cnn_max: float = 0.68
     dual_high_cnn_min: float = 0.85
     dual_high_ts_min: float = 0.85
+    # Cap when GMF sits in [min, max) — mid-GMF dual-high FPs without crushing low-GMF fakes.
+    dual_high_gmf_min: float = 0.0
     dual_high_gmf_max: float = 0.0
     dual_high_fusion_cap: float = 0.0
+    # When CNN+TS agree (both high), boost instead of capping for low-GMF cases.
+    dual_high_agree_boost: float = 0.0
+    dual_high_agree_cnn_min: float = 0.78
+    dual_high_agree_ts_min: float = 0.60
+    # Hard GMF veto only when TimeSformer is also weak (CNN-only overconfidence).
+    gmflow_veto_max_ts: float = 0.50
+    # Soft veto time bounds (replace former hard-coded ts < 0.12).
+    gmflow_soft_veto_max_ts: float = 0.12
+    # Stronger soft discount when TS is mild (not near-zero), e.g. compressed real clips.
+    gmflow_soft_veto_mid_ts_min: float = 0.0
+    cnn_soft_mid_discount: float = 0.0
     # When CNN misses but TimeSformer + GMFlow both fire, rescue toward FAKE.
     dual_module_rescue: bool = True
     dual_module_ts_min: float = 0.60
@@ -75,8 +88,16 @@ class GatingConfig:
             ambiguous_boost_cnn_max=float(payload.get("ambiguous_boost_cnn_max", 0.68)),
             dual_high_cnn_min=float(payload.get("dual_high_cnn_min", 0.85)),
             dual_high_ts_min=float(payload.get("dual_high_ts_min", 0.85)),
+            dual_high_gmf_min=float(payload.get("dual_high_gmf_min", 0.0)),
             dual_high_gmf_max=float(payload.get("dual_high_gmf_max", 0.0)),
             dual_high_fusion_cap=float(payload.get("dual_high_fusion_cap", 0.0)),
+            dual_high_agree_boost=float(payload.get("dual_high_agree_boost", 0.0)),
+            dual_high_agree_cnn_min=float(payload.get("dual_high_agree_cnn_min", 0.78)),
+            dual_high_agree_ts_min=float(payload.get("dual_high_agree_ts_min", 0.60)),
+            gmflow_veto_max_ts=float(payload.get("gmflow_veto_max_ts", 0.50)),
+            gmflow_soft_veto_max_ts=float(payload.get("gmflow_soft_veto_max_ts", 0.12)),
+            gmflow_soft_veto_mid_ts_min=float(payload.get("gmflow_soft_veto_mid_ts_min", 0.0)),
+            cnn_soft_mid_discount=float(payload.get("cnn_soft_mid_discount", 0.0)),
             dual_module_rescue=bool(payload.get("dual_module_rescue", True)),
             dual_module_ts_min=float(payload.get("dual_module_ts_min", 0.60)),
             dual_module_gmf_min=float(payload.get("dual_module_gmf_min", 0.50)),
@@ -167,6 +188,7 @@ def fuse_scores_gated(
         "ts_rescue_tier": None,
         "ts_base_blend_active": False,
         "dual_high_cap_active": False,
+        "dual_high_agree_active": False,
         "dual_module_rescue_active": False,
         "gmflow_veto_active": False,
         "gmflow_soft_veto_active": False,
@@ -175,15 +197,27 @@ def fuse_scores_gated(
 
     s_cnn_eff = float(s_cnn)
     cnn_th = config.module_thresholds["cnn"]
-    if s_cnn_eff >= cnn_th and s_optical < g.gmflow_veto_max:
+    # Hard GMF veto only for CNN-only overconfidence (TimeSformer also weak).
+    if (
+        s_cnn_eff >= cnn_th
+        and s_optical < g.gmflow_veto_max
+        and s_temporal < g.gmflow_veto_max_ts
+    ):
         s_cnn_eff = s_cnn_eff * (1.0 - g.cnn_discount_when_gmf_low)
         meta["gmflow_veto_active"] = True
     elif (
         g.gmflow_soft_veto_cnn_min <= s_cnn_eff < cnn_th
         and s_optical < g.gmflow_soft_veto_max
-        and s_temporal < 0.12
+        and s_temporal < g.gmflow_soft_veto_max_ts
     ):
-        s_cnn_eff = s_cnn_eff * (1.0 - g.cnn_soft_discount)
+        # Mild-TS band can use a stronger discount without touching near-zero-TS fakes.
+        if (
+            g.cnn_soft_mid_discount > 0.0
+            and g.gmflow_soft_veto_mid_ts_min <= s_temporal < g.gmflow_soft_veto_max_ts
+        ):
+            s_cnn_eff = s_cnn_eff * (1.0 - g.cnn_soft_mid_discount)
+        else:
+            s_cnn_eff = s_cnn_eff * (1.0 - g.cnn_soft_discount)
         meta["gmflow_soft_veto_active"] = True
 
     weights = dict(config.weights)
@@ -249,11 +283,22 @@ def fuse_scores_gated(
         fusion = max(fusion, s_cnn)
         meta["ambiguous_boost_active"] = True
 
+    # CNN+TS agreement: raise confidence slightly instead of capping for low GMF.
+    if (
+        g.dual_high_agree_boost > 0.0
+        and s_cnn >= g.dual_high_agree_cnn_min
+        and s_temporal >= g.dual_high_agree_ts_min
+    ):
+        fusion = min(1.0, fusion + g.dual_high_agree_boost)
+        meta["dual_high_agree_active"] = True
+
+    # Dual-high mid-GMF cap: both CNN+TS very high but optical in a mid band
+    # (field dual-false like BBC clip) without crushing low-GMF confirmed fakes.
     if (
         g.dual_high_fusion_cap > 0.0
         and s_cnn >= g.dual_high_cnn_min
         and s_temporal >= g.dual_high_ts_min
-        and s_optical < g.dual_high_gmf_max
+        and g.dual_high_gmf_min <= s_optical < g.dual_high_gmf_max
         and fusion > g.dual_high_fusion_cap
     ):
         fusion = g.dual_high_fusion_cap

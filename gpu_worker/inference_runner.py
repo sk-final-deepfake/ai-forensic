@@ -212,7 +212,12 @@ def run_gateway_inference(job: AnalysisJobMessage, local_path: Path, cfg: Worker
     )
 
 
-def run_local_model_inference(job: AnalysisJobMessage, local_path: Path, cfg: WorkerConfig) -> AnalysisResponseMessage:
+def run_local_model_inference(
+    job: AnalysisJobMessage,
+    local_path: Path,
+    cfg: WorkerConfig,
+    on_progress=None,
+) -> AnalysisResponseMessage:
     """3모듈(Xception + TimeSformer + GMFlow) + Late Fusion — BE 계약 JSON 그대로."""
     if cfg.use_mock_infer:
         return run_test_inference(job, local_path, cfg)
@@ -224,6 +229,7 @@ def run_local_model_inference(job: AnalysisJobMessage, local_path: Path, cfg: Wo
         evidence_id=job.evidenceId,
         video_path=local_path,
         cfg=cfg,
+        on_progress=on_progress,
     )
 
     out_path = cfg.results_dir / f"analysis_{job.analysisRequestId}_{job.evidenceId}.json"
@@ -234,10 +240,15 @@ def run_local_model_inference(job: AnalysisJobMessage, local_path: Path, cfg: Wo
     return payload
 
 
-def run_inference(job: AnalysisJobMessage, local_path: Path, cfg: WorkerConfig) -> AnalysisResponseMessage:
+def run_inference(
+    job: AnalysisJobMessage,
+    local_path: Path,
+    cfg: WorkerConfig,
+    on_progress=None,
+) -> AnalysisResponseMessage:
     mode = cfg.inference_mode.lower()
     if mode == "gateway":
         return run_gateway_inference(job, local_path, cfg)
     if mode == "local_model":
-        return run_local_model_inference(job, local_path, cfg)
+        return run_local_model_inference(job, local_path, cfg, on_progress=on_progress)
     return run_test_inference(job, local_path, cfg)

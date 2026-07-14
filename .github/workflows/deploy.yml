@@ -27,8 +27,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies (smoke)
-        run: pip install -r requirements.txt
+      - name: Install dependencies (consumer smoke)
+        run: pip install -r requirements-consumer.txt
+
+      - name: Consumer unit smoke
+        run: python -m unittest tests.test_response_visualization -v
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4

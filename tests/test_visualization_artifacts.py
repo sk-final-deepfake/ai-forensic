@@ -38,12 +38,13 @@ class VisualizationArtifactUnitTests(unittest.TestCase):
         self.assertAlmostEqual(viz._bbox_iou((0, 0, 10, 10), (0, 0, 10, 10)), 1.0)
         self.assertEqual(viz._bbox_iou((0, 0, 10, 10), (20, 20, 10, 10)), 0.0)
 
-    def test_overlay_yunet_threshold_defaults_to_inference(self) -> None:
+    def test_overlay_yunet_threshold_defaults_lower_than_inference(self) -> None:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("AI_VISUALIZATION_YUNET_THRESHOLD", None)
-            self.assertAlmostEqual(viz._overlay_yunet_threshold(), 0.75)
+            # Overlay uses 0.5 by default so secondary faces are more likely to show.
+            self.assertAlmostEqual(viz._overlay_yunet_threshold(), 0.5)
 
-    def test_enrich_faces_for_overlay_skips_unscored_detections(self) -> None:
+    def test_enrich_faces_for_overlay_keeps_unscored_detections(self) -> None:
         class _Cropper:
             def detect_all_human_face_bboxes(self, _frame: np.ndarray) -> list[tuple[int, int, int, int]]:
                 return [(10, 20, 30, 40), (100, 20, 25, 25)]
@@ -55,9 +56,11 @@ class VisualizationArtifactUnitTests(unittest.TestCase):
             _Cropper(),
             fallback_score=0.1,
         )
-        self.assertEqual(len(enriched), 1)
-        self.assertEqual(enriched[0]["face_index"], 0)
-        self.assertEqual(enriched[0]["score"], 0.8)
+        self.assertEqual(len(enriched), 2)
+        scores_by_index = {row["face_index"]: row["score"] for row in enriched}
+        self.assertEqual(scores_by_index[0], 0.8)
+        # Unmatched YuNet hit inherits the frame's max scored risk.
+        self.assertEqual(scores_by_index[1], 0.8)
 
     def test_enrich_faces_for_overlay_matches_by_iou(self) -> None:
         class _Cropper:

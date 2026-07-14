@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 
 from gpu_worker.config import WorkerConfig
+from gpu_worker.forgery_lane import enrich_with_forgery
 from gpu_worker.schemas import (
     AnalysisJobMessage,
     AnalysisResponseMessage,
@@ -250,5 +251,12 @@ def run_inference(
     if mode == "gateway":
         return run_gateway_inference(job, local_path, cfg)
     if mode == "local_model":
-        return run_local_model_inference(job, local_path, cfg, on_progress=on_progress)
+        result = run_local_model_inference(job, local_path, cfg, on_progress=on_progress)
+        try:
+            result = enrich_with_forgery(result, local_path, cfg)
+        except Exception:
+            import logging
+
+            logging.getLogger("gpu_worker.forgery").exception("Forgery lane hook failed")
+        return result
     return run_test_inference(job, local_path, cfg)

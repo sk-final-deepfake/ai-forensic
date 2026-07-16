@@ -516,9 +516,14 @@ def _bboxes_from_trufor_pair(
     video_h: int,
 ) -> list[dict[str, Any]]:
     """Extract tamper bboxes in original video pixel space."""
+    # Ensure ai-forensic repo root is importable (gpu_worker may not have it yet).
     try:
+        repo = Path(__file__).resolve().parents[2]  # .../ai-forensic
+        if str(repo) not in sys.path:
+            sys.path.insert(0, str(repo))
         from app.services.trufor_overlay import bboxes_from_npz
     except Exception:
+        logger.warning("TruFor bbox import failed; overlays will lack boxes", exc_info=True)
         return []
 
     img = cv2.imread(str(jpg_path))
@@ -530,7 +535,7 @@ def _bboxes_from_trufor_pair(
     try:
         boxes, _ = bboxes_from_npz(npz_path, jw, jh)
     except Exception:
-        logger.debug("TruFor bbox extract failed for %s", npz_path, exc_info=True)
+        logger.warning("TruFor bbox extract failed for %s", npz_path, exc_info=True)
         return []
 
     sx = target_w / float(jw) if jw else 1.0
@@ -546,6 +551,8 @@ def _bboxes_from_trufor_pair(
                 "score": round(float(box.score), 4),
             }
         )
+    if not out:
+        logger.info("TruFor bbox empty for %s (map may be flat)", npz_path.name)
     return out
 
 
@@ -642,6 +649,13 @@ def infer_trufor_spatial(video_path: Path, work_dir: Path, cfg: ForgeryInferConf
         }
         for ts, score, frame_idx, bboxes in frame_scores
     ]
+    bbox_frames = sum(1 for row in frame_risks if row.get("bboxes"))
+    logger.info(
+        "TruFor frameRisks=%d with_bboxes=%d duration=%.3fs",
+        len(frame_risks),
+        bbox_frames,
+        duration_sec,
+    )
     if frame_risks:
         max_ts = max(r["timestampSec"] for r in frame_risks)
         logger.info(

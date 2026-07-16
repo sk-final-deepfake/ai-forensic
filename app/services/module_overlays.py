@@ -341,12 +341,20 @@ def _build_trufor_bbox_overlay_video(
     filename: str,
     banner_label: str,
 ) -> str | None:
-    """Draw per-frame tamper bboxes (from TruFor map); fall back to score banner."""
+    """Draw per-frame tamper bboxes (from TruFor map). Never use full-frame border."""
     from app.services.trufor_overlay import draw_trufor_bboxes
 
     bboxes_by_frame = _frame_risks_to_bboxes(frame_risks)
     frame_scores = _frame_risks_to_frame_scores(frame_risks)
     if not bboxes_by_frame and not frame_scores:
+        return None
+    if not bboxes_by_frame:
+        logger.warning(
+            "TruFor overlay has scores but no bboxes (evidenceId=%s analysisRequestId=%s); "
+            "refusing full-frame border fallback",
+            evidence_id,
+            analysis_request_id,
+        )
         return None
     if os.getenv("AI_VISUALIZATION_OVERLAY", "1").lower() in {"0", "false", "no"}:
         return None
@@ -371,8 +379,9 @@ def _build_trufor_bbox_overlay_video(
         cap.release()
         return None
 
-    scored_indices = sorted(set(bboxes_by_frame) | set(frame_scores))
-    nearest_window = max(1, int(fps * 0.75))
+    scored_indices = sorted(bboxes_by_frame)
+    # Hold each sample box across neighboring frames so sparse TruFor samples still track.
+    nearest_window = max(2, int(fps * 1.25))
 
     frame_index = 0
     try:
@@ -382,18 +391,13 @@ def _build_trufor_bbox_overlay_video(
                 break
 
             boxes = bboxes_by_frame.get(frame_index)
-            score = frame_scores.get(frame_index)
             if boxes is None and scored_indices:
                 nearest = min(scored_indices, key=lambda idx: abs(idx - frame_index))
                 if abs(nearest - frame_index) <= nearest_window:
                     boxes = bboxes_by_frame.get(nearest)
-                    if score is None:
-                        score = frame_scores.get(nearest)
 
             if boxes:
                 frame = draw_trufor_bboxes(frame, boxes, label=banner_label)
-            elif score is not None and score > 0:
-                frame = _draw_score_banner(frame, score=float(score), label=banner_label)
 
             writer.write(frame)
             frame_index += 1

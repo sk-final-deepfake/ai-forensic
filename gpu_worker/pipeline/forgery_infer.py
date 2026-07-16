@@ -640,20 +640,23 @@ def infer_trufor_spatial(video_path: Path, work_dir: Path, cfg: ForgeryInferConf
 
     values = [s for _, s, _, _ in frame_scores]
     video_score = _aggregate(values, cfg.trufor_aggregate)
+    # Keep timeline scores for every sample, but attach localization boxes only when
+    # the frame clears TruFor detection threshold (real-tamper display contract).
     frame_risks = [
         {
             "frameIndex": frame_idx,
             "timestampSec": round(ts, 4),
             "riskScore": round(score, 6),
-            "bboxes": bboxes,
+            "bboxes": bboxes if float(score) >= float(cfg.trufor_threshold) else [],
         }
         for ts, score, frame_idx, bboxes in frame_scores
     ]
     bbox_frames = sum(1 for row in frame_risks if row.get("bboxes"))
     logger.info(
-        "TruFor frameRisks=%d with_bboxes=%d duration=%.3fs",
+        "TruFor frameRisks=%d with_bboxes=%d (threshold=%.3f) duration=%.3fs",
         len(frame_risks),
         bbox_frames,
+        float(cfg.trufor_threshold),
         duration_sec,
     )
     if frame_risks:

@@ -14,6 +14,7 @@ from app.schemas.messaging import (
     AnalysisResponseMessage,
     AnalysisVideoResultItem,
     FrameRiskItem,
+    TamperBBoxItem,
 )
 
 
@@ -27,6 +28,30 @@ def _coerce_score(value: Any) -> float:
     if math.isnan(parsed) or math.isinf(parsed):
         return 0.0
     return parsed
+
+
+def _parse_tamper_bboxes(raw: Any) -> list[TamperBBoxItem] | None:
+    if not isinstance(raw, list) or not raw:
+        return None
+    out: list[TamperBBoxItem] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if not all(k in item for k in ("x", "y", "w", "h")):
+            continue
+        try:
+            out.append(
+                TamperBBoxItem(
+                    x=int(item["x"]),
+                    y=int(item["y"]),
+                    w=int(item["w"]),
+                    h=int(item["h"]),
+                    score=None if item.get("score") is None else float(item["score"]),
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+    return out or None
 
 
 def _sanitize_model_score_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -169,6 +194,7 @@ def call_gpu_gateway(job: AnalysisJobMessage, settings: Settings) -> AnalysisRes
                 frameIndex=int(item.get("frameIndex", item.get("frame_index", i))),
                 timestampSec=float(item.get("timestampSec", item.get("timestamp_sec", 0))),
                 riskScore=float(item.get("riskScore", item.get("risk_score", 0))),
+                bboxes=_parse_tamper_bboxes(item.get("bboxes")),
             )
             for i, item in enumerate(frame_risks_raw)
         ]

@@ -639,6 +639,7 @@ def build_analysis_response(
             ("deepfake:temporal", "deepfake", "TimeSformer", "생성하면 TimeSformer baked 오버레이를 볼 수 있습니다."),
             ("deepfake:optical", "deepfake", "GMFlow", "생성하면 GMFlow baked 오버레이를 볼 수 있습니다."),
             ("forgery:forgery_spatial", "forgery", "TruFor", "생성하면 TruFor baked 오버레이를 볼 수 있습니다."),
+            ("forgery:forgery_temporal", "forgery", "TimeSformer", "생성하면 TimeSformer baked 오버레이를 볼 수 있습니다."),
         )
     ]
 

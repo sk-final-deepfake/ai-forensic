@@ -350,16 +350,54 @@ def _sample_timestamps_sec(n: int, duration_sec: float, fps: float, frame_indice
     return [round(idx / fps, 4) for idx in frame_indices]
 
 
-def _aggregate(values: list[float], mode: str) -> float:
+def _aggregate(
+    values: list[float],
+    mode: str,
+    *,
+    peak_rescue_threshold: float | None = None,
+) -> float:
+    """Aggregate per-frame TruFor scores into a video score.
+
+    top3_mean: mean of the three highest frame scores (official VideoCoF ablation).
+    Sparse peak rescue: when only 1–2 frames fire (e.g. brief object insert) and
+    neighbors are near zero, top3_mean dilutes below threshold even if peak is high.
+    In that case, promote to peak so a clear local tamper is not missed.
+    """
     if not values:
         return 0.0
     if mode == "top2_mean":
         top = sorted(values, reverse=True)[:2]
-        return float(sum(top) / len(top))
+        mean = float(sum(top) / len(top))
+        return _sparse_peak_rescue(mean, values, peak_rescue_threshold)
     if mode == "top3_mean":
         top = sorted(values, reverse=True)[:3]
-        return float(sum(top) / len(top))
+        mean = float(sum(top) / len(top))
+        return _sparse_peak_rescue(mean, values, peak_rescue_threshold)
     return float(max(values))
+
+
+def _sparse_peak_rescue(
+    aggregated: float,
+    values: list[float],
+    threshold: float | None,
+) -> float:
+    if threshold is None or not values:
+        return aggregated
+    peak = float(max(values))
+    if peak >= threshold and aggregated < threshold:
+        # Rank gap: peak is a lone spike, not a sustained high region.
+        ranked = sorted(values, reverse=True)
+        second = float(ranked[1]) if len(ranked) > 1 else 0.0
+        if peak - second >= 0.25:
+            logger.info(
+                "TruFor sparse-peak rescue: aggregate=%.4f peak=%.4f second=%.4f thr=%.4f → peak",
+                aggregated,
+                peak,
+                second,
+                threshold,
+            )
+            return peak
+    return aggregated
 
 
 def _score_from_trufor_npz(npz_path: Path) -> float | None:
@@ -542,17 +580,32 @@ def _bboxes_from_trufor_pair(
     sy = target_h / float(jh) if jh else 1.0
     out: list[dict[str, Any]] = []
     for box in boxes:
+        # TamperBBox or dict from bboxes_from_npz
+        if isinstance(box, dict):
+            bx, by, bw, bh = box["x"], box["y"], box["w"], box["h"]
+            bscore = box.get("score", 0.0)
+        else:
+            bx, by, bw, bh, bscore = box.x, box.y, box.w, box.h, box.score
         out.append(
             {
-                "x": int(round(box.x * sx)),
-                "y": int(round(box.y * sy)),
-                "w": max(1, int(round(box.w * sx))),
-                "h": max(1, int(round(box.h * sy))),
-                "score": round(float(box.score), 4),
+                "x": int(round(float(bx) * sx)),
+                "y": int(round(float(by) * sy)),
+                "w": max(1, int(round(float(bw) * sx))),
+                "h": max(1, int(round(float(bh) * sy))),
+                "score": round(float(bscore), 4),
             }
         )
     if not out:
-        logger.info("TruFor bbox empty for %s (map may be flat)", npz_path.name)
+        try:
+            from app.services.trufor_overlay import inspect_trufor_npz
+
+            logger.info(
+                "TruFor bbox empty for %s (no center fallback): %s",
+                npz_path.name,
+                inspect_trufor_npz(npz_path),
+            )
+        except Exception:
+            logger.info("TruFor bbox empty for %s (map missing/flat; no center fallback)", npz_path.name)
     return out
 
 

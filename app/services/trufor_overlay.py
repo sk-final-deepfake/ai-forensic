@@ -10,6 +10,11 @@ import numpy as np
 
 from .overlay_common import blend_heatmap, colormap_from_scalar_map, format_timestamp, risk_to_bgr, save_jpeg
 
+# Official TruFor NPZ: map=anomaly localization, conf=confidence, score=DET [0,1]
+_LOC_MAP_KEYS = ("map", "anomaly_map", "loc_map", "pred", "anomaly", "det", "output")
+_SCORE_KEYS = ("score", "det_score", "detection_score")
+_CONF_KEYS = ("conf", "conf_map", "confidence")
+
 
 @dataclass
 class TruForFrameArtifact:
@@ -40,16 +45,120 @@ class TamperBBox:
         }
 
 
-def load_trufor_map(npz_path: Path) -> tuple[np.ndarray, float]:
+def _as_2d_float(arr: np.ndarray) -> np.ndarray | None:
+    m = np.asarray(arr, dtype=np.float32)
+    m = np.nan_to_num(m, nan=0.0, posinf=0.0, neginf=0.0)
+    if m.ndim == 3:
+        # CHW or HWC singleton channel
+        if m.shape[0] in (1, 3) and m.shape[0] < m.shape[-1]:
+            m = m[0]
+        else:
+            m = m[..., 0]
+    if m.ndim != 2 or m.size < 4:
+        return None
+    # uint8-scale maps → [0, 1]
+    peak = float(np.max(m))
+    if peak > 1.5:
+        m = m / 255.0
+    return m
+
+
+def _is_spatial_loc_map(m: np.ndarray) -> bool:
+    """Reject flat / constant arrays (score-only fabrications are not localization)."""
+    span = float(np.max(m) - np.min(m))
+    if span < 1e-4:
+        return False
+    if float(np.std(m)) < 1e-4:
+        return False
+    return True
+
+
+def load_trufor_det_score(npz_path: Path) -> float | None:
+    """Image-level DET score (not localization)."""
     data = np.load(npz_path)
-    if "map" in data:
-        m = np.asarray(data["map"], dtype=np.float32)
-        score = float(np.max(m))
-        return m, score
-    if "score" in data:
-        score = float(np.asarray(data["score"]).reshape(-1)[0])
-        return np.full((64, 64), score, dtype=np.float32), score
-    raise KeyError(f"npz missing map/score: {npz_path}")
+    for key in _SCORE_KEYS:
+        if key in data:
+            return float(np.asarray(data[key]).reshape(-1)[0])
+    return None
+
+
+def _read_conf_map(data: Any, shape: tuple[int, int]) -> np.ndarray | None:
+    for key in _CONF_KEYS:
+        if key not in data:
+            continue
+        conf = _as_2d_float(data[key])
+        if conf is None:
+            continue
+        if conf.shape != shape:
+            conf = cv2.resize(conf, (shape[1], shape[0]), interpolation=cv2.INTER_LINEAR)
+        return conf
+    return None
+
+
+def load_trufor_map(npz_path: Path) -> tuple[np.ndarray, float]:
+    """Load a real spatial localization map + display score.
+
+    Never invents a flat map from DET ``score`` alone (that caused wrong boxes).
+    When both ``map`` and ``conf`` exist, uses map weighted by confidence
+    (TruFor reliability) if that increases spatial contrast.
+    """
+    data = np.load(npz_path)
+    det_score = None
+    for key in _SCORE_KEYS:
+        if key in data:
+            det_score = float(np.asarray(data[key]).reshape(-1)[0])
+            break
+
+    chosen: np.ndarray | None = None
+    for key in _LOC_MAP_KEYS:
+        if key not in data:
+            continue
+        m = _as_2d_float(data[key])
+        if m is None or not _is_spatial_loc_map(m):
+            continue
+        conf = _read_conf_map(data, m.shape)
+        if conf is not None and _is_spatial_loc_map(conf):
+            weighted = m * np.clip(conf, 0.0, 1.0)
+            # Prefer weighted map when it keeps / improves spatial structure.
+            if _is_spatial_loc_map(weighted) and float(np.std(weighted)) >= float(np.std(m)) * 0.5:
+                m = weighted
+        chosen = m
+        break
+
+    if chosen is None:
+        raise KeyError(
+            f"npz missing usable localization map "
+            f"(tried {_LOC_MAP_KEYS}; has_score={det_score is not None}): {npz_path}"
+        )
+
+    map_peak = float(np.max(chosen))
+    # Prefer DET score for timeline consistency when present.
+    score = float(det_score) if det_score is not None else map_peak
+    return chosen, score
+
+
+def inspect_trufor_npz(npz_path: Path) -> dict[str, Any]:
+    """Debug helper: NPZ keys + map/score stats (for GPU logs)."""
+    data = np.load(npz_path)
+    keys = list(data.files)
+    info: dict[str, Any] = {"path": str(npz_path), "keys": keys}
+    det = load_trufor_det_score(npz_path)
+    if det is not None:
+        info["det_score"] = round(float(det), 6)
+    for key in _LOC_MAP_KEYS:
+        if key not in data:
+            continue
+        m = _as_2d_float(data[key])
+        if m is None:
+            info[f"{key}_shape"] = "invalid"
+            continue
+        info[f"{key}_shape"] = list(m.shape)
+        info[f"{key}_min"] = round(float(np.min(m)), 6)
+        info[f"{key}_max"] = round(float(np.max(m)), 6)
+        info[f"{key}_std"] = round(float(np.std(m)), 6)
+        info[f"{key}_usable"] = _is_spatial_loc_map(m)
+        break
+    return info
 
 
 def tamper_map_to_bboxes(
@@ -65,6 +174,8 @@ def tamper_map_to_bboxes(
     """Connected-component bboxes from TruFor localization map (pixel-level → rectangles)."""
     arr = np.asarray(tamper_map, dtype=np.float32)
     if arr.ndim != 2 or frame_w <= 0 or frame_h <= 0:
+        return []
+    if not _is_spatial_loc_map(arr):
         return []
 
     peak = float(np.max(arr)) if arr.size else 0.0
@@ -95,7 +206,11 @@ def tamper_map_to_bboxes(
         if area < min_area or w < 4 or h < 4:
             continue
         region = resized[y : y + h, x : x + w]
-        score = float(np.max(region)) if region.size else peak
+        region_mask = labels[y : y + h, x : x + w] == label
+        if np.any(region_mask):
+            score = float(np.max(region[region_mask]))
+        else:
+            score = float(np.max(region)) if region.size else peak
         x0 = max(0, x - pad_x)
         y0 = max(0, y - pad_y)
         x1 = min(frame_w, x + w + pad_x)
@@ -159,22 +274,20 @@ def bboxes_from_npz(
     *,
     threshold: float | None = None,
 ) -> tuple[list[TamperBBox], float]:
-    tamper_map, score = load_trufor_map(npz_path)
+    """Load TruFor NPZ → bboxes.
+
+    Score-only / flat map → empty boxes (no center-frame fallback).
+    DET score is still returned when present so timeline risk can stay.
+    """
+    det_score = load_trufor_det_score(npz_path)
+    try:
+        tamper_map, score = load_trufor_map(npz_path)
+    except KeyError:
+        return [], float(det_score or 0.0)
+
     boxes = tamper_map_to_bboxes(tamper_map, frame_w, frame_h, threshold=threshold)
-    if not boxes and score > 0:
-        # Fallback: single center box when map is flat/score-only.
-        side = max(32, int(min(frame_w, frame_h) * 0.28))
-        cx, cy = frame_w // 2, frame_h // 2
-        boxes = [
-            TamperBBox(
-                x=max(0, cx - side // 2),
-                y=max(0, cy - side // 2),
-                w=min(side, frame_w),
-                h=min(side, frame_h),
-                score=float(score),
-            )
-        ]
-    return boxes, score
+    # Intentionally no center / full-frame fallback when localization is missing.
+    return boxes, float(score if score > 0 else (det_score or 0.0))
 
 
 def overlay_trufor_on_frame(
@@ -184,7 +297,14 @@ def overlay_trufor_on_frame(
     alpha: float = 0.45,
     style: str = "bbox",
 ) -> tuple[np.ndarray, np.ndarray, float]:
-    tamper_map, score = load_trufor_map(npz_path)
+    det_score = load_trufor_det_score(npz_path)
+    try:
+        tamper_map, score = load_trufor_map(npz_path)
+    except KeyError:
+        empty = np.zeros(frame_bgr.shape[:2], dtype=np.float32)
+        empty_heat = colormap_from_scalar_map(empty)
+        return frame_bgr.copy(), empty_heat, float(det_score or 0.0)
+
     heatmap = colormap_from_scalar_map(tamper_map)
     if style == "heatmap":
         blended = blend_heatmap(frame_bgr, heatmap, alpha=alpha)
@@ -192,7 +312,7 @@ def overlay_trufor_on_frame(
 
     h, w = frame_bgr.shape[:2]
     boxes = tamper_map_to_bboxes(tamper_map, w, h)
-    blended = draw_trufor_bboxes(frame_bgr, boxes)
+    blended = draw_trufor_bboxes(frame_bgr, boxes) if boxes else frame_bgr.copy()
     return blended, heatmap, score
 
 

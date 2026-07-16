@@ -58,7 +58,7 @@ def tamper_map_to_bboxes(
     frame_h: int,
     *,
     threshold: float | None = None,
-    min_area_ratio: float = 0.002,
+    min_area_ratio: float = 0.0008,
     max_boxes: int = 6,
     pad_ratio: float = 0.04,
 ) -> list[TamperBBox]:
@@ -72,8 +72,8 @@ def tamper_map_to_bboxes(
         return []
 
     # Adaptive floor: keep high-confidence regions even when global score is moderate.
-    thr = float(threshold) if threshold is not None else max(0.35, 0.55 * peak)
-    thr = min(thr, max(0.2, peak * 0.85))
+    thr = float(threshold) if threshold is not None else max(0.25, 0.45 * peak)
+    thr = min(thr, max(0.15, peak * 0.9))
 
     resized = cv2.resize(arr, (frame_w, frame_h), interpolation=cv2.INTER_LINEAR)
     mask = (resized >= thr).astype(np.uint8) * 255

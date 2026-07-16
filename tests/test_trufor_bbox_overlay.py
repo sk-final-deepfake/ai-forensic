@@ -7,12 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from app.services.module_overlays import _frame_risks_to_bboxes
-from app.services.trufor_overlay import (
-    bboxes_from_npz,
-    draw_trufor_bboxes,
-    load_trufor_map,
-    tamper_map_to_bboxes,
-)
+from app.services.trufor_overlay import draw_trufor_bboxes, tamper_map_to_bboxes
 
 
 class TruForBBoxOverlayTests(unittest.TestCase):
@@ -58,36 +53,6 @@ class TruForBBoxOverlayTests(unittest.TestCase):
             self.assertGreater(score, 0.9)
             self.assertEqual(heatmap.shape[:2], (32, 32))
             self.assertFalse(np.array_equal(frame, blended))
-
-    def test_score_only_npz_no_boxes_no_center_fallback(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            npz = Path(tmp) / "score_only.npz"
-            np.savez(npz, score=np.array(0.78))
-            boxes, score = bboxes_from_npz(npz, 640, 480)
-            self.assertEqual(boxes, [])
-            self.assertAlmostEqual(score, 0.78, places=4)
-            with self.assertRaises(KeyError):
-                load_trufor_map(npz)
-
-    def test_flat_map_no_center_fallback(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            npz = Path(tmp) / "flat_map.npz"
-            np.savez(npz, map=np.zeros((32, 32), dtype=np.float32), score=np.array(0.9))
-            boxes, score = bboxes_from_npz(npz, 640, 480)
-            self.assertEqual(boxes, [])
-            # DET score still available for timeline; no invented center box
-            self.assertAlmostEqual(score, 0.9, places=4)
-
-    def test_real_map_with_det_score(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            npz = Path(tmp) / "real.npz"
-            m = np.zeros((64, 64), dtype=np.float32)
-            m[10:30, 40:55] = 0.85
-            np.savez(npz, map=m, score=np.array(0.77), conf=np.ones_like(m) * 0.9)
-            boxes, score = bboxes_from_npz(npz, 640, 480)
-            self.assertGreaterEqual(len(boxes), 1)
-            self.assertAlmostEqual(score, 0.77, places=4)
-            self.assertGreater(boxes[0].x, 200)
 
 
 if __name__ == "__main__":

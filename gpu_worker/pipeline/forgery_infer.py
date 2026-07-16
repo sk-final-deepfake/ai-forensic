@@ -452,8 +452,9 @@ def _collect_trufor_frame_scores(
     *,
     duration_sec: float,
     fps: float,
-) -> list[tuple[float, float, int]]:
-    """Pair TruFor npz scores with sampled JPEG order; never trust vendor npz sequential names."""
+    video_size: tuple[int, int] | None = None,
+) -> list[tuple[float, float, int, list[dict[str, Any]]]]:
+    """Pair TruFor npz scores (+ tamper bboxes) with sampled JPEG order."""
     jpgs = sorted(
         [p for p in saved_jpgs if p.is_file()],
         key=lambda p: p.name.lower(),
@@ -479,8 +480,11 @@ def _collect_trufor_frame_scores(
             pair_count,
         )
 
+    video_w, video_h = video_size or (0, 0)
+
     frame_indices: list[int] = []
     scores: list[float] = []
+    bbox_rows: list[list[dict[str, Any]]] = []
     for i in range(pair_count):
         jpg = jpgs[i]
         npz = npzs[i]
@@ -492,15 +496,67 @@ def _collect_trufor_frame_scores(
             frame_idx = i
         frame_indices.append(frame_idx)
         scores.append(float(val))
+        bbox_rows.append(_bboxes_from_trufor_pair(jpg, npz, video_w=video_w, video_h=video_h))
 
     if not scores:
         return []
 
     timestamps = _sample_timestamps_sec(len(scores), duration_sec, fps, frame_indices)
     return [
-        (timestamps[i], scores[i], frame_indices[i])
+        (timestamps[i], scores[i], frame_indices[i], bbox_rows[i])
         for i in range(len(scores))
     ]
+
+
+def _bboxes_from_trufor_pair(
+    jpg_path: Path,
+    npz_path: Path,
+    *,
+    video_w: int,
+    video_h: int,
+) -> list[dict[str, Any]]:
+    """Extract tamper bboxes in original video pixel space."""
+    try:
+        from app.services.trufor_overlay import bboxes_from_npz
+    except Exception:
+        return []
+
+    img = cv2.imread(str(jpg_path))
+    if img is None:
+        return []
+    jh, jw = img.shape[:2]
+    target_w = video_w if video_w > 0 else jw
+    target_h = video_h if video_h > 0 else jh
+    try:
+        boxes, _ = bboxes_from_npz(npz_path, jw, jh)
+    except Exception:
+        logger.debug("TruFor bbox extract failed for %s", npz_path, exc_info=True)
+        return []
+
+    sx = target_w / float(jw) if jw else 1.0
+    sy = target_h / float(jh) if jh else 1.0
+    out: list[dict[str, Any]] = []
+    for box in boxes:
+        out.append(
+            {
+                "x": int(round(box.x * sx)),
+                "y": int(round(box.y * sy)),
+                "w": max(1, int(round(box.w * sx))),
+                "h": max(1, int(round(box.h * sy))),
+                "score": round(float(box.score), 4),
+            }
+        )
+    return out
+
+
+def _video_size(video_path: Path) -> tuple[int, int]:
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return 0, 0
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    cap.release()
+    return w, h
 
 
 def infer_trufor_spatial(video_path: Path, work_dir: Path, cfg: ForgeryInferConfig) -> tuple[float, list[dict], list[dict]]:
@@ -561,23 +617,30 @@ def infer_trufor_spatial(video_path: Path, work_dir: Path, cfg: ForgeryInferConf
         )
 
     # Prefer sampled JPEG order; spread timestamps across full clip duration.
+    video_w, video_h = _video_size(video_path)
     frame_scores = _collect_trufor_frame_scores(
-        saved, trufor_out, stem, duration_sec=duration_sec, fps=fps
+        saved,
+        trufor_out,
+        stem,
+        duration_sec=duration_sec,
+        fps=fps,
+        video_size=(video_w, video_h),
     )
 
     if not frame_scores:
         logger.warning("TruFor: no npz scores under %s", trufor_out)
         return 0.0, [], []
 
-    values = [s for _, s, _ in frame_scores]
+    values = [s for _, s, _, _ in frame_scores]
     video_score = _aggregate(values, cfg.trufor_aggregate)
     frame_risks = [
         {
             "frameIndex": frame_idx,
             "timestampSec": round(ts, 4),
             "riskScore": round(score, 6),
+            "bboxes": bboxes,
         }
-        for ts, score, frame_idx in frame_scores
+        for ts, score, frame_idx, bboxes in frame_scores
     ]
     if frame_risks:
         max_ts = max(r["timestampSec"] for r in frame_risks)

@@ -1,13 +1,14 @@
-"""TruFor spatial overlay: localization map -> heatmap on frame."""
+"""TruFor spatial overlay: localization map -> heatmap / tamper bboxes on frame."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
 
-from .overlay_common import blend_heatmap, colormap_from_scalar_map, format_timestamp, save_jpeg
+from .overlay_common import blend_heatmap, colormap_from_scalar_map, format_timestamp, risk_to_bgr, save_jpeg
 
 
 @dataclass
@@ -19,6 +20,24 @@ class TruForFrameArtifact:
     npz_path: Path
     overlay_bgr: np.ndarray
     heatmap_bgr: np.ndarray
+
+
+@dataclass(frozen=True)
+class TamperBBox:
+    x: int
+    y: int
+    w: int
+    h: int
+    score: float
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "x": int(self.x),
+            "y": int(self.y),
+            "w": int(self.w),
+            "h": int(self.h),
+            "score": round(float(self.score), 4),
+        }
 
 
 def load_trufor_map(npz_path: Path) -> tuple[np.ndarray, float]:
@@ -33,10 +52,147 @@ def load_trufor_map(npz_path: Path) -> tuple[np.ndarray, float]:
     raise KeyError(f"npz missing map/score: {npz_path}")
 
 
-def overlay_trufor_on_frame(frame_bgr: np.ndarray, npz_path: Path, *, alpha: float = 0.45) -> tuple[np.ndarray, np.ndarray, float]:
+def tamper_map_to_bboxes(
+    tamper_map: np.ndarray,
+    frame_w: int,
+    frame_h: int,
+    *,
+    threshold: float | None = None,
+    min_area_ratio: float = 0.002,
+    max_boxes: int = 6,
+    pad_ratio: float = 0.04,
+) -> list[TamperBBox]:
+    """Connected-component bboxes from TruFor localization map (pixel-level → rectangles)."""
+    arr = np.asarray(tamper_map, dtype=np.float32)
+    if arr.ndim != 2 or frame_w <= 0 or frame_h <= 0:
+        return []
+
+    peak = float(np.max(arr)) if arr.size else 0.0
+    if peak <= 1e-6:
+        return []
+
+    # Adaptive floor: keep high-confidence regions even when global score is moderate.
+    thr = float(threshold) if threshold is not None else max(0.35, 0.55 * peak)
+    thr = min(thr, max(0.2, peak * 0.85))
+
+    resized = cv2.resize(arr, (frame_w, frame_h), interpolation=cv2.INTER_LINEAR)
+    mask = (resized >= thr).astype(np.uint8) * 255
+    if int(mask.sum()) == 0:
+        return []
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    num, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    min_area = max(16, int(frame_w * frame_h * min_area_ratio))
+    pad_x = max(2, int(frame_w * pad_ratio))
+    pad_y = max(2, int(frame_h * pad_ratio))
+
+    boxes: list[TamperBBox] = []
+    for label in range(1, num):
+        x, y, w, h, area = (int(v) for v in stats[label])
+        if area < min_area or w < 4 or h < 4:
+            continue
+        region = resized[y : y + h, x : x + w]
+        score = float(np.max(region)) if region.size else peak
+        x0 = max(0, x - pad_x)
+        y0 = max(0, y - pad_y)
+        x1 = min(frame_w, x + w + pad_x)
+        y1 = min(frame_h, y + h + pad_y)
+        boxes.append(TamperBBox(x=x0, y=y0, w=max(1, x1 - x0), h=max(1, y1 - y0), score=score))
+
+    boxes.sort(key=lambda b: b.score, reverse=True)
+    return boxes[: max(1, max_boxes)]
+
+
+def draw_trufor_bboxes(
+    frame_bgr: np.ndarray,
+    bboxes: list[TamperBBox] | list[dict[str, Any]],
+    *,
+    label: str = "TruFor",
+) -> np.ndarray:
+    """Xception-style risk-colored rectangles over suspected tamper regions."""
+    out = frame_bgr.copy()
+    h, w = out.shape[:2]
+    for raw in bboxes:
+        if isinstance(raw, TamperBBox):
+            x, y, bw, bh, score = raw.x, raw.y, raw.w, raw.h, raw.score
+        else:
+            x = int(raw.get("x", 0))
+            y = int(raw.get("y", 0))
+            bw = int(raw.get("w", 0))
+            bh = int(raw.get("h", 0))
+            score = float(raw.get("score", 0.0))
+        if bw <= 0 or bh <= 0:
+            continue
+        x = max(0, min(x, w - 1))
+        y = max(0, min(y, h - 1))
+        bw = max(1, min(bw, w - x))
+        bh = max(1, min(bh, h - y))
+        color = risk_to_bgr(score)
+        thickness = max(2, min(w, h) // 180)
+        cv2.rectangle(out, (x, y), (x + bw, y + bh), color, thickness)
+        # Soft fill like Xception heatmap hint (light)
+        overlay = out.copy()
+        cv2.rectangle(overlay, (x, y), (x + bw, y + bh), color, thickness=-1)
+        out = cv2.addWeighted(out, 0.82, overlay, 0.18, 0)
+        tag = f"{label} {score:.2f}"
+        text_y = max(16, y - 6)
+        cv2.putText(
+            out,
+            tag,
+            (x, text_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+    return out
+
+
+def bboxes_from_npz(
+    npz_path: Path,
+    frame_w: int,
+    frame_h: int,
+    *,
+    threshold: float | None = None,
+) -> tuple[list[TamperBBox], float]:
+    tamper_map, score = load_trufor_map(npz_path)
+    boxes = tamper_map_to_bboxes(tamper_map, frame_w, frame_h, threshold=threshold)
+    if not boxes and score > 0:
+        # Fallback: single center box when map is flat/score-only.
+        side = max(32, int(min(frame_w, frame_h) * 0.28))
+        cx, cy = frame_w // 2, frame_h // 2
+        boxes = [
+            TamperBBox(
+                x=max(0, cx - side // 2),
+                y=max(0, cy - side // 2),
+                w=min(side, frame_w),
+                h=min(side, frame_h),
+                score=float(score),
+            )
+        ]
+    return boxes, score
+
+
+def overlay_trufor_on_frame(
+    frame_bgr: np.ndarray,
+    npz_path: Path,
+    *,
+    alpha: float = 0.45,
+    style: str = "bbox",
+) -> tuple[np.ndarray, np.ndarray, float]:
     tamper_map, score = load_trufor_map(npz_path)
     heatmap = colormap_from_scalar_map(tamper_map)
-    blended = blend_heatmap(frame_bgr, heatmap, alpha=alpha)
+    if style == "heatmap":
+        blended = blend_heatmap(frame_bgr, heatmap, alpha=alpha)
+        return blended, heatmap, score
+
+    h, w = frame_bgr.shape[:2]
+    boxes = tamper_map_to_bboxes(tamper_map, w, h)
+    blended = draw_trufor_bboxes(frame_bgr, boxes)
     return blended, heatmap, score
 
 

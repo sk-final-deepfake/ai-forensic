@@ -24,10 +24,21 @@ class AnalysisJobMessage(BaseModel):
     requestedAt: str | None = None
 
 
+class TamperBBoxItem(BaseModel):
+    """Pixel-region bbox from TruFor localization (video pixel space)."""
+
+    x: int
+    y: int
+    w: int
+    h: int
+    score: float | None = None
+
+
 class FrameRiskItem(BaseModel):
     frameIndex: int
     timestampSec: float
     riskScore: float
+    bboxes: list[TamperBBoxItem] | None = None
 
 
 class ClipRiskItem(BaseModel):
@@ -164,7 +175,7 @@ class OverlayJobMessage(BaseModel):
     overlayJobId: int
     analysisRequestId: int
     evidenceId: int
-    module: Literal["cnn", "temporal", "optical", "forgery_spatial"]
+    module: Literal["cnn", "temporal", "optical", "forgery_spatial", "forgery_temporal"]
     filePath: str
     s3ObjectKey: str | None = None
     s3Bucket: str | None = None

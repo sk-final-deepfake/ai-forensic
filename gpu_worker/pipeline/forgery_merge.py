@@ -9,6 +9,42 @@ from gpu_worker.pipeline.forgery_infer import ForgeryLaneResult
 logger = logging.getLogger("gpu_worker.forgery")
 
 
+def _to_tamper_bboxes(raw: Any) -> list[Any] | None:
+    if not isinstance(raw, list) or not raw:
+        return None
+    try:
+        from gpu_worker.schemas import TamperBBoxItem
+
+        out: list[Any] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            if not all(k in item for k in ("x", "y", "w", "h")):
+                continue
+            out.append(
+                TamperBBoxItem(
+                    x=int(item["x"]),
+                    y=int(item["y"]),
+                    w=int(item["w"]),
+                    h=int(item["h"]),
+                    score=float(item["score"]) if item.get("score") is not None else None,
+                )
+            )
+        return out or None
+    except Exception:
+        return [
+            {
+                "x": int(item["x"]),
+                "y": int(item["y"]),
+                "w": int(item["w"]),
+                "h": int(item["h"]),
+                "score": item.get("score"),
+            }
+            for item in raw
+            if isinstance(item, dict) and all(k in item for k in ("x", "y", "w", "h"))
+        ] or None
+
+
 def _model_score_item(
     *,
     module_name: str,
@@ -62,6 +98,7 @@ def _module_timeline_item(
                 frameIndex=int(r.get("frameIndex", i)),
                 timestampSec=float(r.get("timestampSec", 0.0)),
                 riskScore=float(r.get("riskScore", 0.0)),
+                bboxes=_to_tamper_bboxes(r.get("bboxes")),
             )
             for i, r in enumerate(frame_risks or [])
         ]

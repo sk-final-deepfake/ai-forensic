@@ -11,6 +11,7 @@ from pika.adapters.blocking_connection import BlockingConnection
 
 from app.core.config import Settings
 from app.gpu_client import _utc_now, call_gpu_gateway
+from app.messaging.analysis_progress import publish_analysis_progress_with_channel
 from app.schemas.messaging import AnalysisJobMessage, AnalysisResponseMessage
 from app.services.response_visualization import attach_visualization_artifacts
 
@@ -83,6 +84,14 @@ class AnalysisConsumer:
             job.filePath,
         )
         try:
+            publish_analysis_progress_with_channel(
+                channel,
+                self._settings,
+                job.analysisRequestId,
+                job.evidenceId,
+                5,
+                "GPU 분석 준비 중",
+            )
             result = call_gpu_gateway(job, self._settings)
             result = attach_visualization_artifacts(job, result)
             self._publish_result(channel, result)

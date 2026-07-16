@@ -59,8 +59,8 @@ class VisualizationArtifactUnitTests(unittest.TestCase):
         self.assertEqual(len(enriched), 2)
         scores_by_index = {row["face_index"]: row["score"] for row in enriched}
         self.assertEqual(scores_by_index[0], 0.8)
-        # Unmatched YuNet hit inherits the frame's max scored risk.
-        self.assertEqual(scores_by_index[1], 0.8)
+        # Unmatched YuNet hit: outline only (no inherited heat / JET flood).
+        self.assertEqual(scores_by_index[1], 0.0)
 
     def test_enrich_faces_for_overlay_matches_by_iou(self) -> None:
         class _Cropper:

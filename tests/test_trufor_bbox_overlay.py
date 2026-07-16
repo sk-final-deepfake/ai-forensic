@@ -54,6 +54,18 @@ class TruForBBoxOverlayTests(unittest.TestCase):
             self.assertEqual(heatmap.shape[:2], (32, 32))
             self.assertFalse(np.array_equal(frame, blended))
 
+    def test_bboxes_from_npz_no_center_fallback_on_flat_map(self) -> None:
+        from app.services.trufor_overlay import bboxes_from_npz
+
+        with tempfile.TemporaryDirectory() as tmp:
+            npz = Path(tmp) / "flat_f000.npz"
+            # Score-only / flat map must not invent a center box.
+            m = np.full((32, 32), 0.12, dtype=np.float32)
+            np.savez(npz, map=m, score=np.array(0.77))
+            boxes, score = bboxes_from_npz(npz, 64, 64)
+            self.assertGreater(score, 0.7)
+            self.assertEqual(boxes, [])
+
 
 if __name__ == "__main__":
     unittest.main()

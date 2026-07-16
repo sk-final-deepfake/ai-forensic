@@ -159,21 +159,14 @@ def bboxes_from_npz(
     *,
     threshold: float | None = None,
 ) -> tuple[list[TamperBBox], float]:
+    """Load TruFor NPZ → real localization bboxes only.
+
+    Flat / score-only maps return empty boxes (no invented center-frame box).
+    DET score is still returned when present so timeline risk can stay.
+    """
     tamper_map, score = load_trufor_map(npz_path)
     boxes = tamper_map_to_bboxes(tamper_map, frame_w, frame_h, threshold=threshold)
-    if not boxes and score > 0:
-        # Fallback: single center box when map is flat/score-only.
-        side = max(32, int(min(frame_w, frame_h) * 0.28))
-        cx, cy = frame_w // 2, frame_h // 2
-        boxes = [
-            TamperBBox(
-                x=max(0, cx - side // 2),
-                y=max(0, cy - side // 2),
-                w=min(side, frame_w),
-                h=min(side, frame_h),
-                score=float(score),
-            )
-        ]
+    # Intentionally no center / full-frame fallback when localization is missing.
     return boxes, score
 
 

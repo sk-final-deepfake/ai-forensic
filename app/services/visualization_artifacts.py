@@ -101,7 +101,6 @@ def _enrich_faces_for_overlay(
             if (bbox := _resolve_scored_bbox(face, [])) is not None
         ]
 
-    frame_default = max((float(face["score"]) for face in scored_faces), default=fallback_score)
     used_detection: set[int] = set()
     enriched: list[dict[str, Any]] = []
 
@@ -135,7 +134,9 @@ def _enrich_faces_for_overlay(
     for j, det in enumerate(detected):
         if j in used_detection:
             continue
-        enriched.append({"bbox": det, "score": frame_default, "face_index": j})
+        # Unmatched YuNet faces: outline only (no heat). Copying max frame score
+        # used to flood the frame with JET blue when many faces were unscored.
+        enriched.append({"bbox": det, "score": 0.0, "face_index": j})
 
     enriched.sort(key=lambda item: (item["face_index"], -item["score"]))
     return enriched
@@ -148,9 +149,19 @@ def _timestamp_label(seconds: float) -> str:
 
 
 def _risk_colormap_bgr(risk: float) -> tuple[int, int, int]:
-    value = int(np.clip(risk, 0.0, 1.0) * 255)
-    color = cv2.applyColorMap(np.array([[value]], dtype=np.uint8), cv2.COLORMAP_JET)[0, 0]
-    return int(color[0]), int(color[1]), int(color[2])
+    """Green → yellow → red for bbox strokes (avoid JET blue at low risk)."""
+    t = float(np.clip(risk, 0.0, 1.0))
+    if t < 0.5:
+        u = t / 0.5
+        # green → yellow
+        return 0, int(180 + 75 * u), int(40 + 215 * u)
+    u = (t - 0.5) / 0.5
+    # yellow → red
+    return 0, int(255 * (1.0 - u)), 255
+
+
+def _bbox_stroke_bgr(risk: float) -> tuple[int, int, int]:
+    return _risk_colormap_bgr(risk)
 
 
 def _face_bboxes_on_frame(cropper: Any, frame: np.ndarray) -> list[tuple[int, int, int, int]]:
@@ -235,12 +246,37 @@ def _render_heatmap_layer(
 
 
 def _draw_face_overlay(frame: np.ndarray, bbox: tuple[int, int, int, int], risk_score: float) -> np.ndarray:
+    """Draw face box + localized heat. Low risk keeps the original frame readable.
+
+    Important: JET maps 0→blue across the full frame if we `addWeighted` the whole
+    heatmap. Blend only where the gaussian mask is strong, and scale alpha by risk.
+    """
     output = frame.copy()
     x, y, w, h = bbox
-    color = _risk_colormap_bgr(risk_score)
-    cv2.rectangle(output, (x, y), (x + w, y + h), color, 2)
-    heat = _render_heatmap_layer(output.shape, bbox, risk_score)
-    return cv2.addWeighted(output, 0.65, heat, 0.35, 0)
+    risk = float(np.clip(risk_score, 0.0, 1.0))
+    color = _bbox_stroke_bgr(risk)
+    thickness = max(2, min(w, h) // 48)
+    cv2.rectangle(output, (x, y), (x + w, y + h), color, thickness)
+
+    # Skip heat fill for near-zero / unscored faces so the video stays visible.
+    if risk < 0.12:
+        return output
+
+    height, width = output.shape[:2]
+    mask = np.zeros((height, width), dtype=np.float32)
+    cx = x + w // 2
+    cy = y + h // 2
+    radius = max(8, int(max(w, h) * 0.55))
+    cv2.circle(mask, (cx, cy), radius, 1.0, thickness=-1)
+    mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=max(radius * 0.35, 1.0))
+    mask = np.clip(mask, 0.0, 1.0)
+
+    heat = cv2.applyColorMap((mask * 255.0).astype(np.uint8), cv2.COLORMAP_JET)
+    # Peak blend ~0.28 at risk=1; near-zero risk already returned above.
+    peak_alpha = 0.10 + 0.22 * risk
+    alpha = (mask * peak_alpha)[..., None]
+    blended = output.astype(np.float32) * (1.0 - alpha) + heat.astype(np.float32) * alpha
+    return np.clip(blended, 0, 255).astype(np.uint8)
 
 
 def _read_frame_at_index(video_path: Path, frame_index: int) -> tuple[np.ndarray | None, float]:

@@ -29,6 +29,7 @@ from app.services.module_overlays import build_module_overlay_set
 from app.services.visualization_artifacts import build_visualization_artifacts
 from app.schemas.analysis import AnalysisRequest
 from app.services.infer_bridge import InferRuntime, ModuleInferResult
+from app.services.integrated_risk import integrate_risk_score
 from app.services.late_fusion import (
     FusionConfig,
     build_analysis_reasons,
@@ -41,7 +42,6 @@ from app.services.late_fusion import (
     confidence_from_module_scores,
     fuse_scores,
     load_fusion_config,
-    risk_level_from_score,
     score_detected,
 )
 
@@ -311,8 +311,17 @@ def _inconclusive_soft_response(
         frame_edit_detected = detected
         frame_edit_score = score
         reasons.append(f"forgery_spatial: TruFor score={score:.4f} detected={detected}")
+        forgery_lane_scores: list[float | None] = [score]
     else:
         reasons.append(forgery_note)
+        forgery_lane_scores = []
+
+    # Soft face-gate: deepfake unavailable → risk from forgery only (else 0 / LOW).
+    integrated = integrate_risk_score(
+        deepfake_score=None,
+        deepfake_available=False,
+        forgery_scores=forgery_lane_scores,
+    )
 
     video_result = AnalysisVideoResultItem(
         deepfakeDetected=False,
@@ -338,9 +347,9 @@ def _inconclusive_soft_response(
         analysisRequestId=request.analysisRequestId,
         evidenceId=_resolve_evidence_id(request),
         status="COMPLETED",
-        riskScore=0.0,
+        riskScore=integrated.risk_score,
         confidenceScore=0.0,
-        riskLevel="LOW",
+        riskLevel=integrated.risk_level,  # type: ignore[arg-type]
         analysisReasons=reasons,
         results=[video_result],
         analyzedAt=_utc_now_iso(),
@@ -622,6 +631,37 @@ def build_response_from_modules(
         config=config,
     )
 
+    forgery_spatial = by_module.get("forgery_spatial")
+    forgery_temporal = by_module.get("forgery_temporal")
+    forgery_lane_scores: list[float | None] = []
+    frame_edit_detected = False
+    frame_edit_score = 0.0
+    if (
+        forgery_spatial is not None
+        and forgery_spatial.status == "ok"
+        and forgery_spatial.fake_score is not None
+    ):
+        forgery_lane_scores.append(float(forgery_spatial.fake_score))
+        frame_edit_score = float(forgery_spatial.fake_score)
+        thr = 0.515
+        if isinstance(forgery_spatial.details, dict) and forgery_spatial.details.get("threshold") is not None:
+            thr = float(forgery_spatial.details["threshold"])
+        frame_edit_detected = frame_edit_score >= thr
+    if (
+        forgery_temporal is not None
+        and forgery_temporal.status == "ok"
+        and forgery_temporal.fake_score is not None
+    ):
+        forgery_lane_scores.append(float(forgery_temporal.fake_score))
+
+    integrated = integrate_risk_score(
+        deepfake_score=fusion_score,
+        deepfake_available=True,
+        forgery_scores=forgery_lane_scores,
+        medium_min=float(config.risk_levels["medium_min"]),
+        high_min=float(config.risk_levels["high_min"]),
+    )
+
     representative_frames: list[RepresentativeFrameItem] = []
     overlay_video_url: str | None = None
     model_overlay_artifacts: list[ModelOverlayArtifactItem] = []
@@ -666,6 +706,8 @@ def build_response_from_modules(
     video_result = AnalysisVideoResultItem(
         deepfakeDetected=fusion_detected,
         deepfakeScore=round(fusion_score, 6),
+        frameEditDetected=frame_edit_detected if forgery_lane_scores else None,
+        frameEditScore=round(frame_edit_score, 6) if forgery_lane_scores else None,
         frameRisks=frame_risks,
         clipRisks=clip_risks,
         pairRisks=pair_risks,
@@ -687,9 +729,9 @@ def build_response_from_modules(
         analysisRequestId=request.analysisRequestId,
         evidenceId=_resolve_evidence_id(request),
         status="COMPLETED",
-        riskScore=round(fusion_score * 100.0, 2),
+        riskScore=integrated.risk_score,
         confidenceScore=confidence,
-        riskLevel=risk_level_from_score(fusion_score, config),
+        riskLevel=integrated.risk_level,  # type: ignore[arg-type]
         analysisReasons=reasons,
         results=[video_result],
         analyzedAt=_utc_now_iso(),

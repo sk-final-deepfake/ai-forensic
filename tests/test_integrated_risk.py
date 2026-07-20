@@ -391,3 +391,26 @@ def test_forgery_scores_from_lane_result_enabled_lane() -> None:
     scores = forgery_scores_from_lane_result(_Lane())
     r = integrate_risk_score(deepfake_score=0.20, forgery_scores=scores)
     assert r.risk_score == round(dynamic_weighted_mean01(0.20, 0.88) * 100.0, 2)
+
+
+def test_build_forgery_analysis_reasons_includes_spatial_and_temporal() -> None:
+    from app.services.integrated_risk import (
+        build_forgery_analysis_reasons,
+        build_integrated_risk_reason,
+    )
+
+    lines = build_forgery_analysis_reasons(
+        spatial_score=0.12,
+        temporal_score=0.88,
+        spatial_detected=False,
+        temporal_detected=True,
+        spatial_threshold=0.515,
+        temporal_threshold=0.173,
+    )
+    assert len(lines) == 2
+    assert "Forgery spatial (TruFor)" in lines[0]
+    assert "Forgery temporal (TimeSformer)" in lines[1]
+    integrated = integrate_risk_score(deepfake_score=0.20, forgery_scores=[0.88])
+    summary = build_integrated_risk_reason(integrated)
+    assert "Integrated risk" in summary
+    assert "riskScore=" in summary

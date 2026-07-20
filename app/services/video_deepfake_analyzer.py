@@ -29,7 +29,11 @@ from app.services.module_overlays import build_module_overlay_set
 from app.services.visualization_artifacts import build_visualization_artifacts
 from app.schemas.analysis import AnalysisRequest
 from app.services.infer_bridge import InferRuntime, ModuleInferResult
-from app.services.integrated_risk import integrate_risk_score
+from app.services.integrated_risk import (
+    build_forgery_analysis_reasons,
+    build_integrated_risk_reason,
+    integrate_risk_score,
+)
 from app.services.late_fusion import (
     FusionConfig,
     build_analysis_reasons,
@@ -310,8 +314,15 @@ def _inconclusive_soft_response(
         )
         frame_edit_detected = detected
         frame_edit_score = score
-        reasons.append(f"forgery_spatial: TruFor score={score:.4f} detected={detected}")
-        forgery_lane_scores: list[float | None] = [score]
+        forgery_lane_scores = [score]
+        reasons.extend(
+            build_forgery_analysis_reasons(
+                spatial_score=score,
+                spatial_detected=detected,
+                spatial_threshold=threshold,
+                include_temporal=False,
+            )
+        )
     else:
         reasons.append(forgery_note)
         forgery_lane_scores = []
@@ -322,6 +333,8 @@ def _inconclusive_soft_response(
         deepfake_available=False,
         forgery_scores=forgery_lane_scores,
     )
+    if forgery_lane_scores:
+        reasons.append(build_integrated_risk_reason(integrated))
 
     video_result = AnalysisVideoResultItem(
         deepfakeDetected=False,
@@ -661,6 +674,37 @@ def build_response_from_modules(
         medium_min=float(config.risk_levels["medium_min"]),
         high_min=float(config.risk_levels["high_min"]),
     )
+
+    if forgery_lane_scores:
+        spatial_thr = 0.515
+        temporal_thr = 0.173386
+        if forgery_spatial is not None and isinstance(forgery_spatial.details, dict):
+            if forgery_spatial.details.get("threshold") is not None:
+                spatial_thr = float(forgery_spatial.details["threshold"])
+        if forgery_temporal is not None and isinstance(forgery_temporal.details, dict):
+            if forgery_temporal.details.get("threshold") is not None:
+                temporal_thr = float(forgery_temporal.details["threshold"])
+        reasons.extend(
+            build_forgery_analysis_reasons(
+                spatial_score=float(forgery_spatial.fake_score)
+                if forgery_spatial is not None and forgery_spatial.fake_score is not None
+                else None,
+                temporal_score=float(forgery_temporal.fake_score)
+                if forgery_temporal is not None and forgery_temporal.fake_score is not None
+                else None,
+                spatial_detected=frame_edit_detected,
+                temporal_detected=bool(
+                    forgery_temporal is not None
+                    and forgery_temporal.fake_score is not None
+                    and float(forgery_temporal.fake_score) >= temporal_thr
+                ),
+                spatial_threshold=spatial_thr,
+                temporal_threshold=temporal_thr,
+                include_spatial=forgery_spatial is not None and forgery_spatial.fake_score is not None,
+                include_temporal=forgery_temporal is not None and forgery_temporal.fake_score is not None,
+            )
+        )
+        reasons.append(build_integrated_risk_reason(integrated))
 
     representative_frames: list[RepresentativeFrameItem] = []
     overlay_video_url: str | None = None

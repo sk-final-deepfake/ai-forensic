@@ -242,6 +242,8 @@ def merge_forgery_into_response(response: Any, forgery: ForgeryLaneResult, *, wo
     # Do not append forgery lines to analysisReasons / 종합 소견 —
     # keep the deepfake late-fusion narrative as before.
 
+    _recompute_top_level_risk(response, forgery)
+
     logger.info(
         "Merged forgery lane spatial=%.4f temporal=%.4f frameRisks=%d clipRisks=%d",
         forgery.spatial_score,
@@ -250,3 +252,81 @@ def merge_forgery_into_response(response: Any, forgery: ForgeryLaneResult, *, wo
         len(forgery.clip_risks),
     )
     return response
+
+
+_SOFT_FACE_GATE_CODES = frozenset(
+    {
+        "NO_HUMAN_FACE",
+        "FACE_TOO_SMALL",
+        "NO_FACE",
+        "FACE_GATE",
+    }
+)
+
+
+def _attr_or_key(obj: Any, name: str, default: Any = None) -> Any:
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
+def _set_attr_or_key(obj: Any, name: str, value: Any) -> None:
+    if obj is None:
+        return
+    if isinstance(obj, dict):
+        obj[name] = value
+    elif hasattr(obj, name):
+        setattr(obj, name, value)
+
+
+def _recompute_top_level_risk(response: Any, forgery: ForgeryLaneResult) -> None:
+    """After spatial+temporal merge, refresh riskScore with dynamic-weighted integrate rule."""
+    try:
+        from app.services.integrated_risk import integrate_risk_score
+    except Exception:
+        logger.exception("integrated_risk import failed; leaving riskScore unchanged")
+        return
+
+    video = None
+    results = _attr_or_key(response, "results") or []
+    if results:
+        video = results[0]
+
+    deepfake_raw = _attr_or_key(video, "deepfakeScore")
+    if deepfake_raw is None:
+        deepfake_raw = _attr_or_key(response, "deepfakeScore")
+
+    error_code = str(_attr_or_key(response, "errorCode", "") or "").strip().upper()
+    deepfake_available = error_code not in _SOFT_FACE_GATE_CODES
+
+    deepfake_score: float | None
+    try:
+        deepfake_score = float(deepfake_raw) if deepfake_raw is not None else None
+    except (TypeError, ValueError):
+        deepfake_score = None
+
+    if not deepfake_available:
+        deepfake_score = None
+
+    forgery_scores = [float(forgery.spatial_score), float(forgery.temporal_score)]
+
+    integrated = integrate_risk_score(
+        deepfake_score=deepfake_score,
+        deepfake_available=deepfake_available and deepfake_score is not None,
+        forgery_scores=forgery_scores,
+        medium_min=40.0,
+        high_min=70.0,
+    )
+
+    _set_attr_or_key(response, "riskScore", integrated.risk_score)
+    _set_attr_or_key(response, "riskLevel", integrated.risk_level)
+    logger.info(
+        "Recomputed riskScore=%.2f riskLevel=%s method=%s (deepfake=%s forgery_max=%.4f)",
+        integrated.risk_score,
+        integrated.risk_level,
+        integrated.method,
+        "n/a" if integrated.deepfake_score_01 is None else f"{integrated.deepfake_score_01:.4f}",
+        integrated.forgery_score_01 or 0.0,
+    )

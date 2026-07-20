@@ -239,10 +239,14 @@ def merge_forgery_into_response(response: Any, forgery: ForgeryLaneResult, *, wo
     if hasattr(video, "moduleTimelines"):
         video.moduleTimelines = timelines
 
-    # Do not append forgery lines to analysisReasons / 종합 소견 —
-    # keep the deepfake late-fusion narrative as before.
-
-    _recompute_top_level_risk(response, forgery)
+    integrated = _recompute_top_level_risk(response, forgery)
+    _append_forgery_analysis_reasons(
+        response,
+        forgery,
+        trufor_threshold=trufor_threshold,
+        ts_threshold=ts_threshold,
+        integrated=integrated,
+    )
 
     logger.info(
         "Merged forgery lane spatial=%.4f temporal=%.4f frameRisks=%d clipRisks=%d",
@@ -281,13 +285,16 @@ def _set_attr_or_key(obj: Any, name: str, value: Any) -> None:
         setattr(obj, name, value)
 
 
-def _recompute_top_level_risk(response: Any, forgery: ForgeryLaneResult) -> None:
+def _recompute_top_level_risk(response: Any, forgery: ForgeryLaneResult) -> Any:
     """After spatial+temporal merge, refresh riskScore with dynamic-weighted integrate rule."""
     try:
-        from app.services.integrated_risk import integrate_risk_score
+        from app.services.integrated_risk import (
+            forgery_scores_from_lane_result,
+            integrate_risk_score,
+        )
     except Exception:
         logger.exception("integrated_risk import failed; leaving riskScore unchanged")
-        return
+        return None
 
     video = None
     results = _attr_or_key(response, "results") or []
@@ -310,7 +317,7 @@ def _recompute_top_level_risk(response: Any, forgery: ForgeryLaneResult) -> None
     if not deepfake_available:
         deepfake_score = None
 
-    forgery_scores = [float(forgery.spatial_score), float(forgery.temporal_score)]
+    forgery_scores = forgery_scores_from_lane_result(forgery)
 
     integrated = integrate_risk_score(
         deepfake_score=deepfake_score,
@@ -330,3 +337,41 @@ def _recompute_top_level_risk(response: Any, forgery: ForgeryLaneResult) -> None
         "n/a" if integrated.deepfake_score_01 is None else f"{integrated.deepfake_score_01:.4f}",
         integrated.forgery_score_01 or 0.0,
     )
+    return integrated
+
+
+def _append_forgery_analysis_reasons(
+    response: Any,
+    forgery: ForgeryLaneResult,
+    *,
+    trufor_threshold: float,
+    ts_threshold: float,
+    integrated: Any,
+) -> None:
+    """Append forgery + integrated risk lines to analysisReasons (종합 소견)."""
+    try:
+        from app.services.integrated_risk import (
+            build_forgery_analysis_reasons,
+            build_integrated_risk_reason,
+        )
+    except Exception:
+        logger.exception("integrated_risk reason helpers import failed")
+        return
+
+    if not forgery.lane_ran:
+        return
+
+    reasons = list(_attr_or_key(response, "analysisReasons") or [])
+    reasons.extend(
+        build_forgery_analysis_reasons(
+            spatial_score=forgery.spatial_score,
+            temporal_score=forgery.temporal_score,
+            spatial_detected=forgery.spatial_detected,
+            temporal_detected=forgery.temporal_detected,
+            spatial_threshold=trufor_threshold,
+            temporal_threshold=ts_threshold,
+        )
+    )
+    if integrated is not None:
+        reasons.append(build_integrated_risk_reason(integrated))
+    _set_attr_or_key(response, "analysisReasons", reasons)

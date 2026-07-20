@@ -9,6 +9,7 @@ import pytest
 
 from app.services.integrated_risk import (
     dynamic_weighted_mean01,
+    forgery_scores_from_lane_result,
     forgery_scores_from_success,
     integrate_risk_score,
 )
@@ -370,3 +371,46 @@ def test_dynamic_weight_between_mean_and_max() -> None:
     peak = dynamic_weighted_mean01(0.2, 0.9)
     assert 0.55 < peak < 0.9
     assert abs(peak - (0.04 + 0.81) / 1.1) < 1e-9
+
+
+def test_forgery_scores_from_lane_result_disabled_lane() -> None:
+    class _Lane:
+        lane_ran = False
+        spatial_score = 0.0
+        temporal_score = 0.0
+
+    assert forgery_scores_from_lane_result(_Lane()) == []
+
+
+def test_forgery_scores_from_lane_result_enabled_lane() -> None:
+    class _Lane:
+        lane_ran = True
+        spatial_score = 0.12
+        temporal_score = 0.88
+
+    scores = forgery_scores_from_lane_result(_Lane())
+    r = integrate_risk_score(deepfake_score=0.20, forgery_scores=scores)
+    assert r.risk_score == round(dynamic_weighted_mean01(0.20, 0.88) * 100.0, 2)
+
+
+def test_build_forgery_analysis_reasons_includes_spatial_and_temporal() -> None:
+    from app.services.integrated_risk import (
+        build_forgery_analysis_reasons,
+        build_integrated_risk_reason,
+    )
+
+    lines = build_forgery_analysis_reasons(
+        spatial_score=0.12,
+        temporal_score=0.88,
+        spatial_detected=False,
+        temporal_detected=True,
+        spatial_threshold=0.515,
+        temporal_threshold=0.173,
+    )
+    assert len(lines) == 2
+    assert "Forgery spatial (TruFor)" in lines[0]
+    assert "Forgery temporal (TimeSformer)" in lines[1]
+    integrated = integrate_risk_score(deepfake_score=0.20, forgery_scores=[0.88])
+    summary = build_integrated_risk_reason(integrated)
+    assert "Integrated risk" in summary
+    assert "riskScore=" in summary

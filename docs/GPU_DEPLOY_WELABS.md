@@ -4,7 +4,27 @@
 > **코드 repo:** `/home/sk4team/ai-forensic`  
 > **모델/작업 루트:** `/home/sk4team/forenShield-ai/deepfake`  
 > **환경설정:** `/home/sk4team/forenShield-ai/config/env.local`  
-> **브랜치:** `feature/ai-multi-face-infer` (또는 `develop` — 동일 커밋 `5053904` 이후)
+> **브랜치:** `develop` 또는 배포 브랜치 (아래 handoff 스크립트 참고)
+
+---
+
+## 0. 작업자에게 보낼 경로·환경변수 (복사)
+
+카톡에 바로 붙여넣을 배포 안내를 자동 생성합니다.
+
+```powershell
+# ai 레포 루트에서 — 클립보드 복사까지
+python scripts/deploy/gpu_worker_handoff.py --copy
+
+# 또는 PowerShell 래퍼
+.\scripts\deploy\copy_gpu_worker_handoff.ps1
+
+# 브랜치 지정
+.\scripts\deploy\copy_gpu_worker_handoff.ps1 -Branch fix/dynamic-weighted-risk-lane
+```
+
+출력만 보기: `python scripts/deploy/gpu_worker_handoff.py`  
+주제 변경: `--topic fusion-v4c` (기본: `dynamic-risk`)
 
 ---
 

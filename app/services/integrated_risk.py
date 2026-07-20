@@ -15,7 +15,7 @@ Exceptions:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 
 DEFAULT_MEDIUM_MIN = 40.0
@@ -127,3 +127,15 @@ def forgery_scores_from_success(
     if temporal_ok and temporal_score is not None:
         scores.append(temporal_score)
     return scores
+
+
+def forgery_scores_from_lane_result(forgery: Any | None) -> list[float | None]:
+    """Build forgery score list from GPU ForgeryLaneResult (skip when lane disabled)."""
+    if forgery is None or not bool(getattr(forgery, "lane_ran", False)):
+        return []
+    return forgery_scores_from_success(
+        spatial_score=float(getattr(forgery, "spatial_score", 0.0)),
+        temporal_score=float(getattr(forgery, "temporal_score", 0.0)),
+        spatial_ok=True,
+        temporal_ok=True,
+    )

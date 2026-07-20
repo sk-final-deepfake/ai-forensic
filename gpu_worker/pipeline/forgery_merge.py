@@ -284,7 +284,10 @@ def _set_attr_or_key(obj: Any, name: str, value: Any) -> None:
 def _recompute_top_level_risk(response: Any, forgery: ForgeryLaneResult) -> None:
     """After spatial+temporal merge, refresh riskScore with dynamic-weighted integrate rule."""
     try:
-        from app.services.integrated_risk import integrate_risk_score
+        from app.services.integrated_risk import (
+            forgery_scores_from_lane_result,
+            integrate_risk_score,
+        )
     except Exception:
         logger.exception("integrated_risk import failed; leaving riskScore unchanged")
         return
@@ -310,7 +313,7 @@ def _recompute_top_level_risk(response: Any, forgery: ForgeryLaneResult) -> None
     if not deepfake_available:
         deepfake_score = None
 
-    forgery_scores = [float(forgery.spatial_score), float(forgery.temporal_score)]
+    forgery_scores = forgery_scores_from_lane_result(forgery)
 
     integrated = integrate_risk_score(
         deepfake_score=deepfake_score,

@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 ProgressCallback = Callable[[int, str | None], None]
 
+from app.services.integrated_risk import integrate_risk_score
 from app.services.late_fusion import (
     build_fused_per_frame_scores,
     build_suspicious_segments,
@@ -366,7 +367,8 @@ def _soft_inconclusive_response(
     frame_edit_detected = False
     frame_edit_score = 0.0
 
-    if forgery_ran_successfully(forgery) and forgery is not None:
+    forgery_ok = forgery_ran_successfully(forgery) and forgery is not None
+    if forgery_ok and forgery is not None:
         model_scores.append(
             ModelScoreItem(
                 moduleName=forgery.module,
@@ -399,6 +401,13 @@ def _soft_inconclusive_response(
     else:
         reasons.append(forgery_note)
 
+    # Soft face-gate: deepfake unavailable → risk from forgery only (else 0).
+    integrated = integrate_risk_score(
+        deepfake_score=None,
+        deepfake_available=False,
+        forgery_scores=[_safe_score(forgery.video_score)] if forgery_ok and forgery is not None else [],
+    )
+
     video_item = AnalysisVideoResultItem(
         modelName="forenshield-late-fusion",
         modelVersion=version,
@@ -423,9 +432,9 @@ def _soft_inconclusive_response(
         evidenceId=evidence_id,
         status="COMPLETED",
         progressPercent=100,
-        riskScore=0.0,
+        riskScore=integrated.risk_score,
         confidenceScore=0.0,
-        riskLevel="LOW",
+        riskLevel=integrated.risk_level,  # type: ignore[arg-type]
         analyzedAt=_utc_now(),
         errorCode=error_code,
         message=full_message,
@@ -688,8 +697,18 @@ def build_analysis_response(
         reason="High fused frame-level fake probability cluster",
     )
 
-    frame_edit_detected = forgery.detected if forgery_ran_successfully(forgery) else None
-    frame_edit_score = _safe_score(forgery.video_score) if forgery_ran_successfully(forgery) else None
+    forgery_ok = forgery_ran_successfully(forgery)
+    frame_edit_detected = forgery.detected if forgery_ok else None
+    frame_edit_score = _safe_score(forgery.video_score) if forgery_ok else None
+
+    risk_levels = fusion_config.get("risk_levels") or {}
+    integrated = integrate_risk_score(
+        deepfake_score=fusion.score,
+        deepfake_available=True,
+        forgery_scores=[_safe_score(forgery.video_score)] if forgery_ok else [],
+        medium_min=float(risk_levels.get("medium_min", 40.0)),
+        high_min=float(risk_levels.get("high_min", 70.0)),
+    )
 
     video_item = AnalysisVideoResultItem(
         modelName=str(fusion_meta.get("modelName", "Late Fusion")),
@@ -719,9 +738,9 @@ def build_analysis_response(
         evidenceId=evidence_id,
         status="COMPLETED",
         progressPercent=100,
-        riskScore=fusion.risk_score,
+        riskScore=integrated.risk_score,
         confidenceScore=fusion.confidence,
-        riskLevel=fusion.risk_level,  # type: ignore[arg-type]
+        riskLevel=integrated.risk_level,  # type: ignore[arg-type]
         modelName=video_item.modelName,
         modelVersion=video_item.modelVersion,
         analysisReasons=fusion.reasons,

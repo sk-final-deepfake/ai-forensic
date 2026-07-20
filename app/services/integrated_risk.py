@@ -139,3 +139,44 @@ def forgery_scores_from_lane_result(forgery: Any | None) -> list[float | None]:
         spatial_ok=True,
         temporal_ok=True,
     )
+
+
+def build_forgery_analysis_reasons(
+    *,
+    spatial_score: float | None = None,
+    temporal_score: float | None = None,
+    spatial_detected: bool = False,
+    temporal_detected: bool = False,
+    spatial_threshold: float = 0.515,
+    temporal_threshold: float = 0.173386,
+    include_spatial: bool = True,
+    include_temporal: bool = True,
+) -> list[str]:
+    """Human-readable forgery lane lines for analysisReasons / 종합 소견."""
+    lines: list[str] = []
+    if include_spatial and spatial_score is not None:
+        lines.append(
+            f"Forgery spatial (TruFor) fake_score={_clamp01(spatial_score):.3f} "
+            f"({'fake' if spatial_detected else 'real'}) @ T={spatial_threshold:.3f}"
+        )
+    if include_temporal and temporal_score is not None:
+        lines.append(
+            f"Forgery temporal (TimeSformer) fake_score={_clamp01(temporal_score):.3f} "
+            f"({'fake' if temporal_detected else 'real'}) @ T={temporal_threshold:.3f}"
+        )
+    return lines
+
+
+def build_integrated_risk_reason(result: IntegratedRiskResult) -> str:
+    """Single-line integrated risk summary for analysisReasons / 종합 소견."""
+    method_labels = {
+        "dynamic_weighted_deepfake_forgery": "dynamic weighted deepfake+forgery",
+        "deepfake_only": "deepfake only",
+        "forgery_only": "forgery only",
+        "none": "unavailable",
+    }
+    label = method_labels.get(result.method, result.method)
+    return (
+        f"Integrated risk ({label}) riskScore={result.risk_score:.2f} "
+        f"→ {result.risk_level}"
+    )

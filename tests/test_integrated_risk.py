@@ -1,4 +1,4 @@
-"""Unit tests for integrated riskScore = max(deepfake, forgery) with fixed exceptions.
+"""Unit tests for integrated riskScore = dynamic weighted (F,G) with fixed exceptions.
 
 100 table-driven scenarios: normal, missed detection, soft gate, forgery skip, boundaries.
 """
@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from app.services.integrated_risk import (
+    dynamic_weighted_mean01,
     forgery_scores_from_success,
     integrate_risk_score,
 )
@@ -23,7 +24,7 @@ def _level(score: float, *, medium: float = 40.0, high: float = 70.0) -> str:
 
 def _method(*, df: float | None, forgery: float | None) -> str:
     if df is not None and forgery is not None:
-        return "max_deepfake_forgery"
+        return "dynamic_weighted_deepfake_forgery"
     if df is not None:
         return "deepfake_only"
     if forgery is not None:
@@ -32,10 +33,13 @@ def _method(*, df: float | None, forgery: float | None) -> str:
 
 
 def _peak100(df: float | None, forgery: float | None) -> float:
-    vals = [v for v in (df, forgery) if v is not None]
-    if not vals:
-        return 0.0
-    return round(max(vals) * 100.0, 2)
+    if df is not None and forgery is not None:
+        return round(dynamic_weighted_mean01(df, forgery) * 100.0, 2)
+    if df is not None:
+        return round(df * 100.0, 2)
+    if forgery is not None:
+        return round(forgery * 100.0, 2)
+    return 0.0
 
 
 def _case(
@@ -296,16 +300,17 @@ def test_integrate_risk_score_100_cases(
 def test_scenario_normal_real_both_low() -> None:
     """정상 real: fusion·TruFor 모두 낮음 → 종합 LOW."""
     r = integrate_risk_score(deepfake_score=0.08, forgery_scores=[0.05])
-    assert r.risk_score == 8.0
+    assert r.risk_score == round(dynamic_weighted_mean01(0.08, 0.05) * 100.0, 2)
     assert r.risk_level == "LOW"
 
 
 def test_scenario_deepfake_miss_forgery_catches() -> None:
-    """딥페이크 미탐(낮은 fusion) + 편집 흔적(높은 TruFor) → forgery가 종합 반영."""
+    """딥페이크 미탐(낮은 fusion) + 편집 흔적(높은 TruFor) → 동적 가중으로 반영."""
     r = integrate_risk_score(deepfake_score=0.12, forgery_scores=[0.88])
-    assert r.risk_score == 88.0
-    assert r.risk_level == "HIGH"
-    assert r.method == "max_deepfake_forgery"
+    expected = round(dynamic_weighted_mean01(0.12, 0.88) * 100.0, 2)
+    assert r.risk_score == expected
+    assert r.risk_level == _level(expected)
+    assert r.method == "dynamic_weighted_deepfake_forgery"
 
 
 def test_scenario_forgery_skip_deepfake_only() -> None:
@@ -346,7 +351,7 @@ def test_forgery_scores_from_success_both_modules() -> None:
     )
     assert scores == [0.55, 0.82]
     r = integrate_risk_score(deepfake_score=0.20, forgery_scores=scores)
-    assert r.risk_score == 82.0
+    assert r.risk_score == round(dynamic_weighted_mean01(0.20, 0.82) * 100.0, 2)
 
 
 def test_forgery_scores_from_success_spatial_only() -> None:
@@ -357,4 +362,11 @@ def test_forgery_scores_from_success_spatial_only() -> None:
         temporal_ok=False,
     )
     r = integrate_risk_score(deepfake_score=0.20, forgery_scores=scores)
-    assert r.risk_score == 70.0
+    assert r.risk_score == round(dynamic_weighted_mean01(0.20, 0.70) * 100.0, 2)
+
+
+def test_dynamic_weight_between_mean_and_max() -> None:
+    """F=0.2, G=0.9 → 동적 가중은 단순평균(0.55)과 max(0.9) 사이."""
+    peak = dynamic_weighted_mean01(0.2, 0.9)
+    assert 0.55 < peak < 0.9
+    assert abs(peak - (0.04 + 0.81) / 1.1) < 1e-9

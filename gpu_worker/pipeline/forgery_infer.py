@@ -80,6 +80,7 @@ class ForgeryInferConfig:
 
 @dataclass
 class ForgeryLaneResult:
+    lane_ran: bool = False
     spatial_score: float = 0.0
     temporal_score: float = 0.0
     spatial_detected: bool = False
@@ -791,6 +792,7 @@ def run_forgery_modules(video_path: Path, worker_cfg: Any, *, work_dir: Path | N
             video_path, temporal_work, cfg
         )
         return ForgeryLaneResult(
+            lane_ran=True,
             spatial_score=spatial_score,
             temporal_score=temporal_score,
             spatial_detected=spatial_score >= cfg.trufor_threshold,

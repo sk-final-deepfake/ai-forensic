@@ -213,6 +213,18 @@ def run_gateway_inference(job: AnalysisJobMessage, local_path: Path, cfg: Worker
     )
 
 
+def _write_analysis_result_json(
+    cfg: WorkerConfig,
+    job: AnalysisJobMessage,
+    payload: AnalysisResponseMessage,
+) -> None:
+    out_path = cfg.results_dir / f"analysis_{job.analysisRequestId}_{job.evidenceId}.json"
+    out_path.write_text(
+        json.dumps(payload.model_dump(mode="json", exclude_none=True), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
 def run_local_model_inference(
     job: AnalysisJobMessage,
     local_path: Path,
@@ -233,11 +245,6 @@ def run_local_model_inference(
         on_progress=on_progress,
     )
 
-    out_path = cfg.results_dir / f"analysis_{job.analysisRequestId}_{job.evidenceId}.json"
-    out_path.write_text(
-        json.dumps(payload.model_dump(mode="json", exclude_none=True), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
     return payload
 
 
@@ -251,12 +258,16 @@ def run_inference(
     if mode == "gateway":
         return run_gateway_inference(job, local_path, cfg)
     if mode == "local_model":
-        result = run_local_model_inference(job, local_path, cfg, on_progress=on_progress)
-        try:
-            result = enrich_with_forgery(result, local_path, cfg)
-        except Exception:
-            import logging
+        from gpu_worker.infer_lock import gpu_infer_lock
 
-            logging.getLogger("gpu_worker.forgery").exception("Forgery lane hook failed")
+        with gpu_infer_lock(work_dir=cfg.work_dir, label=f"infer_{job.analysisRequestId}"):
+            result = run_local_model_inference(job, local_path, cfg, on_progress=on_progress)
+            try:
+                result = enrich_with_forgery(result, local_path, cfg)
+            except Exception:
+                import logging
+
+                logging.getLogger("gpu_worker.forgery").exception("Forgery lane hook failed")
+            _write_analysis_result_json(cfg, job, result)
         return result
     return run_test_inference(job, local_path, cfg)

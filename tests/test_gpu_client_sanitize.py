@@ -42,3 +42,26 @@ def test_sanitize_gateway_response_coerces_null_module_scores() -> None:
     sanitized = _sanitize_gateway_response(raw)
     assert sanitized["modelScores"][2]["score"] == 0.0
     assert sanitized["results"][0]["moduleTimelines"][1]["videoScore"] == 0.0
+
+
+def test_sanitize_gateway_response_coerces_null_per_frame_face_scores() -> None:
+    raw = {
+        "analysisRequestId": 561,
+        "evidenceId": 1,
+        "status": "COMPLETED",
+        "analyzedAt": "2026-07-21T00:00:00Z",
+        "results": [
+            {
+                "type": "video",
+                "perFrameFaceScores": [
+                    {"frameIndex": 0, "faceIndex": 0, "riskScore": None, "bbox": {"x": 1, "y": 2, "w": 3, "h": 4}},
+                    {"frameIndex": 1, "faceIndex": 0, "riskScore": 0.4},
+                ],
+            }
+        ],
+    }
+
+    sanitized = _sanitize_gateway_response(raw)
+    faces = sanitized["results"][0]["perFrameFaceScores"]
+    assert faces[0]["riskScore"] == 0.0
+    assert faces[1]["riskScore"] == 0.4

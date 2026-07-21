@@ -106,6 +106,65 @@ def tamper_map_to_bboxes(
     return boxes[: max(1, max_boxes)]
 
 
+def _bbox_area(box: TamperBBox) -> int:
+    return max(0, int(box.w)) * max(0, int(box.h))
+
+
+def _bbox_intersection(a: TamperBBox, b: TamperBBox) -> int:
+    x0 = max(a.x, b.x)
+    y0 = max(a.y, b.y)
+    x1 = min(a.x + a.w, b.x + b.w)
+    y1 = min(a.y + a.h, b.y + b.h)
+    return max(0, x1 - x0) * max(0, y1 - y0)
+
+
+def pick_localized_bboxes(
+    boxes: list[TamperBBox],
+    frame_w: int,
+    frame_h: int,
+    *,
+    max_boxes: int = 1,
+    max_area_ratio: float = 0.35,
+    contain_overlap: float = 0.55,
+) -> list[TamperBBox]:
+    """Prefer compact localization peaks; drop broad parent blobs (display/API only).
+
+    Among compact boxes (area <= max_area_ratio) the highest local map score wins,
+    so a tiny low-score noise blob does not beat the real chest/face peak.
+    """
+    if not boxes or frame_w <= 0 or frame_h <= 0:
+        return []
+
+    frame_area = float(frame_w * frame_h)
+    sorted_boxes = sorted(boxes, key=lambda b: (-b.score, _bbox_area(b)))
+
+    picked: list[TamperBBox] = []
+    for box in sorted_boxes:
+        area = _bbox_area(box)
+        if area <= 0:
+            continue
+        if area / frame_area > max_area_ratio:
+            continue
+
+        mostly_inside = any(
+            _bbox_intersection(keep, box) / max(float(area), 1e-9) >= contain_overlap for keep in picked
+        )
+        if mostly_inside:
+            continue
+
+        contains_picked = any(
+            _bbox_intersection(box, keep) / max(float(_bbox_area(keep)), 1e-9) >= contain_overlap
+            for keep in picked
+        )
+        if contains_picked:
+            continue
+
+        picked.append(box)
+        if len(picked) >= max(1, max_boxes):
+            break
+    return picked
+
+
 def draw_trufor_bboxes(
     frame_bgr: np.ndarray,
     bboxes: list[TamperBBox] | list[dict[str, Any]],
@@ -184,7 +243,7 @@ def overlay_trufor_on_frame(
         return blended, heatmap, score
 
     h, w = frame_bgr.shape[:2]
-    boxes = tamper_map_to_bboxes(tamper_map, w, h)
+    boxes = pick_localized_bboxes(tamper_map_to_bboxes(tamper_map, w, h), w, h, max_boxes=5)
     blended = draw_trufor_bboxes(frame_bgr, boxes)
     return blended, heatmap, score
 

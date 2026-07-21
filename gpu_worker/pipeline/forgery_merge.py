@@ -2,11 +2,31 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from gpu_worker.pipeline.forgery_infer import ForgeryLaneResult
 
 logger = logging.getLogger("gpu_worker.forgery")
+
+_SOFT_TRUFOR_REASON_RE = re.compile(
+    r"위변조\(TruFor\)|"
+    r"^\s*forgery_spatial:\s*TruFor\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_soft_trufor_analysis_reasons(reasons: list[Any]) -> list[Any]:
+    """Drop soft-fail TruFor notes once the dedicated forgery lane succeeded."""
+    kept: list[Any] = []
+    for item in reasons:
+        if not isinstance(item, str):
+            kept.append(item)
+            continue
+        if _SOFT_TRUFOR_REASON_RE.search(item):
+            continue
+        kept.append(item)
+    return kept
 
 
 def _to_tamper_bboxes(raw: Any) -> list[Any] | None:
@@ -361,7 +381,7 @@ def _append_forgery_analysis_reasons(
     if not forgery.lane_ran:
         return
 
-    reasons = list(_attr_or_key(response, "analysisReasons") or [])
+    reasons = _strip_soft_trufor_analysis_reasons(list(_attr_or_key(response, "analysisReasons") or []))
     reasons.extend(
         build_forgery_analysis_reasons(
             spatial_score=forgery.spatial_score,

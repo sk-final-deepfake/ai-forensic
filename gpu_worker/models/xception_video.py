@@ -20,6 +20,11 @@ IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 _MODEL_CACHE: dict[str, Any] = {}
 
 
+def clear_model_cache() -> None:
+    """Drop cached Xception weights so forgery lane can reuse VRAM."""
+    _MODEL_CACHE.clear()
+
+
 @dataclass(frozen=True)
 class XceptionVideoResult:
     model_id: str

@@ -70,6 +70,20 @@ def _sanitize_module_timeline_item(item: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _sanitize_per_frame_face_score_item(item: dict[str, Any]) -> dict[str, Any] | None:
+    out = dict(item)
+    if out.get("frameIndex") is None and out.get("frame_index") is None:
+        return None
+    if "frameIndex" not in out and out.get("frame_index") is not None:
+        out["frameIndex"] = out["frame_index"]
+    if "faceIndex" not in out and out.get("face_index") is not None:
+        out["faceIndex"] = out["face_index"]
+    out["faceIndex"] = int(out.get("faceIndex") or 0)
+    out["frameIndex"] = int(out["frameIndex"])
+    out["riskScore"] = _coerce_score(out.get("riskScore", out.get("fake_score", out.get("prob_fake"))))
+    return out
+
+
 def _sanitize_gateway_response(data: dict[str, Any]) -> dict[str, Any]:
     """GPU may return null module scores when TimeSformer/GMFlow soft-fail."""
     out = dict(data)
@@ -93,6 +107,15 @@ def _sanitize_gateway_response(data: dict[str, Any]) -> dict[str, Any]:
                     for timeline in row["moduleTimelines"]
                     if isinstance(timeline, dict)
                 ]
+            if isinstance(row.get("perFrameFaceScores"), list):
+                faces: list[dict[str, Any]] = []
+                for face in row["perFrameFaceScores"]:
+                    if not isinstance(face, dict):
+                        continue
+                    sanitized_face = _sanitize_per_frame_face_score_item(face)
+                    if sanitized_face is not None:
+                        faces.append(sanitized_face)
+                row["perFrameFaceScores"] = faces
             sanitized_results.append(row)
         out["results"] = sanitized_results
     return out

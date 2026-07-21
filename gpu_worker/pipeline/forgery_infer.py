@@ -522,7 +522,7 @@ def _bboxes_from_trufor_pair(
         repo = Path(__file__).resolve().parents[2]  # .../ai-forensic
         if str(repo) not in sys.path:
             sys.path.insert(0, str(repo))
-        from app.services.trufor_overlay import bboxes_from_npz
+        from app.services.trufor_overlay import bboxes_from_npz, pick_localized_bboxes
     except Exception:
         logger.warning("TruFor bbox import failed; overlays will lack boxes", exc_info=True)
         return []
@@ -535,6 +535,8 @@ def _bboxes_from_trufor_pair(
     target_h = video_h if video_h > 0 else jh
     try:
         boxes, _ = bboxes_from_npz(npz_path, jw, jh)
+        # Keep all compact blobs (score-sorted); FE draws the top one as primary.
+        boxes = pick_localized_bboxes(boxes, jw, jh, max_boxes=5)
     except Exception:
         logger.warning("TruFor bbox extract failed for %s", npz_path, exc_info=True)
         return []

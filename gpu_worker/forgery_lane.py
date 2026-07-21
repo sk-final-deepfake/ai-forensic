@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from gpu_worker.gpu_memory import release_deepfake_gpu_memory
 from gpu_worker.pipeline.forgery_infer import ForgeryInferConfig, run_forgery_modules
 from gpu_worker.pipeline.forgery_merge import merge_forgery_into_response
 
@@ -23,6 +24,7 @@ def enrich_with_forgery(response: Any, video_path: Path, worker_cfg: Any) -> Any
         # Parent dir only; each call uses a unique forgery_lane_* child (cleaned after).
         work_root = Path(worker_cfg.work_dir) / "forgery_lane"
         work_root.mkdir(parents=True, exist_ok=True)
+        release_deepfake_gpu_memory()
         forgery = run_forgery_modules(video_path, worker_cfg, work_dir=work_root)
         return merge_forgery_into_response(response, forgery, worker_cfg=worker_cfg)
     except Exception:

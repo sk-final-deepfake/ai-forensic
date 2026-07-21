@@ -414,3 +414,21 @@ def test_build_forgery_analysis_reasons_includes_spatial_and_temporal() -> None:
     summary = build_integrated_risk_reason(integrated)
     assert "Integrated risk" in summary
     assert "riskScore=" in summary
+
+
+def test_strip_soft_trufor_reasons_when_forgery_lane_succeeds() -> None:
+    from gpu_worker.pipeline.forgery_merge import _strip_soft_trufor_analysis_reasons
+
+    reasons = [
+        "CNN (Xception) fake_score=0.806 (fake)",
+        "Late fusion (fusion-v4c-field-tuned) score=0.537 → REAL @ T=0.58",
+        "위변조(TruFor) 실행 중 오류가 발생해 생략되었습니다. (TruFor produced no finite frame scores)",
+        "forgery_spatial: TruFor score=0.0000 detected=False",
+        "Forgery spatial (TruFor) fake_score=0.645 (fake) @ T=0.515",
+    ]
+    kept = _strip_soft_trufor_analysis_reasons(reasons)
+    assert kept == [
+        "CNN (Xception) fake_score=0.806 (fake)",
+        "Late fusion (fusion-v4c-field-tuned) score=0.537 → REAL @ T=0.58",
+        "Forgery spatial (TruFor) fake_score=0.645 (fake) @ T=0.515",
+    ]

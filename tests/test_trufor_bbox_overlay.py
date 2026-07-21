@@ -7,7 +7,12 @@ from pathlib import Path
 import numpy as np
 
 from app.services.module_overlays import _frame_risks_to_bboxes
-from app.services.trufor_overlay import draw_trufor_bboxes, tamper_map_to_bboxes
+from app.services.trufor_overlay import (
+    TamperBBox,
+    draw_trufor_bboxes,
+    pick_localized_bboxes,
+    tamper_map_to_bboxes,
+)
 
 
 class TruForBBoxOverlayTests(unittest.TestCase):
@@ -53,6 +58,19 @@ class TruForBBoxOverlayTests(unittest.TestCase):
             self.assertGreater(score, 0.9)
             self.assertEqual(heatmap.shape[:2], (32, 32))
             self.assertFalse(np.array_equal(frame, blended))
+
+    def test_pick_localized_bboxes_prefers_small_chest_over_broad_torso(self) -> None:
+        broad = TamperBBox(x=80, y=40, w=420, h=360, score=0.93)
+        chest = TamperBBox(x=340, y=300, w=90, h=75, score=0.47)
+        picked = pick_localized_bboxes([broad, chest], 640, 480)
+        self.assertEqual(len(picked), 1)
+        self.assertAlmostEqual(picked[0].score, 0.47)
+        self.assertLess(picked[0].w, 120)
+
+    def test_pick_localized_bboxes_drops_broad_only_blob(self) -> None:
+        broad = TamperBBox(x=60, y=30, w=500, h=420, score=0.91)
+        picked = pick_localized_bboxes([broad], 640, 480)
+        self.assertEqual(picked, [])
 
     def test_bboxes_from_npz_no_center_fallback_on_flat_map(self) -> None:
         from app.services.trufor_overlay import bboxes_from_npz

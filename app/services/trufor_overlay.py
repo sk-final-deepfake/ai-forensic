@@ -127,12 +127,16 @@ def pick_localized_bboxes(
     max_area_ratio: float = 0.35,
     contain_overlap: float = 0.55,
 ) -> list[TamperBBox]:
-    """Prefer compact localization peaks; drop broad parent blobs (display/API only)."""
+    """Prefer compact localization peaks; drop broad parent blobs (display/API only).
+
+    Among compact boxes (area <= max_area_ratio) the highest local map score wins,
+    so a tiny low-score noise blob does not beat the real chest/face peak.
+    """
     if not boxes or frame_w <= 0 or frame_h <= 0:
         return []
 
     frame_area = float(frame_w * frame_h)
-    sorted_boxes = sorted(boxes, key=lambda b: (_bbox_area(b), -b.score))
+    sorted_boxes = sorted(boxes, key=lambda b: (-b.score, _bbox_area(b)))
 
     picked: list[TamperBBox] = []
     for box in sorted_boxes:

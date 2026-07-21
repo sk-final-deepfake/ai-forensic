@@ -72,6 +72,14 @@ class TruForBBoxOverlayTests(unittest.TestCase):
         picked = pick_localized_bboxes([broad], 640, 480)
         self.assertEqual(picked, [])
 
+    def test_pick_localized_bboxes_prefers_high_score_over_tiny_noise(self) -> None:
+        # Tiny low-score noise blob (e.g. near the waist) must not beat the chest peak.
+        noise = TamperBBox(x=520, y=380, w=30, h=30, score=0.31)
+        chest = TamperBBox(x=340, y=300, w=90, h=75, score=0.47)
+        picked = pick_localized_bboxes([noise, chest], 640, 480)
+        self.assertEqual(len(picked), 1)
+        self.assertAlmostEqual(picked[0].score, 0.47)
+
     def test_bboxes_from_npz_no_center_fallback_on_flat_map(self) -> None:
         from app.services.trufor_overlay import bboxes_from_npz
 

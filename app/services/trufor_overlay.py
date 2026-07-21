@@ -243,7 +243,7 @@ def overlay_trufor_on_frame(
         return blended, heatmap, score
 
     h, w = frame_bgr.shape[:2]
-    boxes = pick_localized_bboxes(tamper_map_to_bboxes(tamper_map, w, h), w, h)
+    boxes = pick_localized_bboxes(tamper_map_to_bboxes(tamper_map, w, h), w, h, max_boxes=5)
     blended = draw_trufor_bboxes(frame_bgr, boxes)
     return blended, heatmap, score
 

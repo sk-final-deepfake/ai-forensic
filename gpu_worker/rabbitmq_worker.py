@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from functools import partial
 
@@ -11,6 +12,7 @@ import pika
 from pika.adapters.blocking_connection import BlockingConnection
 
 from gpu_worker.config import WorkerConfig, load_config
+from gpu_worker.infer_lock import gpu_infer_lock
 from gpu_worker.inference_runner import _utc_now, run_inference
 from gpu_worker.overlay_runner import run_overlay_job
 from gpu_worker.s3_download import download_job_file
@@ -178,7 +180,8 @@ def process_overlay_job(channel: pika.channel.Channel, cfg: WorkerConfig, body: 
     )
     local_path = download_job_file(analysis_shim, cfg)
     try:
-        result = run_overlay_job(job, local_path, cfg, on_progress=report_progress)
+        with gpu_infer_lock(work_dir=cfg.work_dir, label=f"overlay_{job.overlayJobId}"):
+            result = run_overlay_job(job, local_path, cfg, on_progress=report_progress)
         publish_overlay_result(channel, cfg, result)
     except Exception as exc:
         logger.exception("Overlay failed overlayJobId=%s", job.overlayJobId)
@@ -224,30 +227,42 @@ def main() -> None:
         stream=sys.stdout,
     )
     cfg = load_config()
+    consume_analysis = os.getenv("CONSUME_ANALYSIS_QUEUE", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
     logger.info(
-        "Starting GPU worker mode=%s device=%s rabbit=%s:%s analysis_queue=%s overlay_queue=%s",
+        "Starting GPU worker mode=%s device=%s rabbit=%s:%s analysis_queue=%s overlay_queue=%s consume_analysis=%s",
         cfg.inference_mode,
         cfg.device,
         cfg.rabbit_host,
         cfg.rabbit_port,
         cfg.analysis_queue,
         cfg.overlay_queue,
+        consume_analysis,
     )
 
     connection = _connect(cfg)
     channel = connection.channel()
     channel.basic_qos(prefetch_count=cfg.prefetch_count)
-    channel.queue_declare(queue=cfg.analysis_queue, durable=True)
-    channel.queue_declare(queue=cfg.overlay_queue, durable=True)
-    channel.basic_consume(
-        queue=cfg.analysis_queue,
-        on_message_callback=partial(_on_analysis_message, cfg=cfg),
-    )
+    if consume_analysis:
+        channel.queue_declare(queue=cfg.analysis_queue, durable=True)
+    channel.queue_declare(queue=cfg.overlay_queue, durable=True, passive=True)
+    if consume_analysis:
+        channel.basic_consume(
+            queue=cfg.analysis_queue,
+            on_message_callback=partial(_on_analysis_message, cfg=cfg),
+        )
     channel.basic_consume(
         queue=cfg.overlay_queue,
         on_message_callback=partial(_on_overlay_message, cfg=cfg),
     )
-    logger.info("Waiting for messages on %s and %s", cfg.analysis_queue, cfg.overlay_queue)
+    if consume_analysis:
+        logger.info("Waiting for messages on %s and %s", cfg.analysis_queue, cfg.overlay_queue)
+    else:
+        logger.info("Waiting for messages on %s only (analysis via Method B gateway)", cfg.overlay_queue)
     channel.start_consuming()
 
 

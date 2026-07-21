@@ -46,6 +46,9 @@ def upload_file(local_path: Path, *, bucket: str, key: str) -> str | None:
         return None
 
     region = os.getenv("AWS_REGION", "ap-northeast-2")
+    # Welabs GPU uses instance/env credentials — ignore laptop AWS_PROFILE from env.local.
+    os.environ.pop("AWS_PROFILE", None)
+    os.environ.pop("AWS_DEFAULT_PROFILE", None)
     client = boto3.client("s3", region_name=region)
     content_type = _content_type(local_path)
     extra = {"ContentType": content_type} if content_type else {}

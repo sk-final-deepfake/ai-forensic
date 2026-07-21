@@ -7,36 +7,94 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-def _load_dotenv() -> None:
-    candidates: list[Path] = [
-        Path(__file__).resolve().parent / ".env",
-    ]
-    forenshield_root = os.getenv("FORENSHIELD_AI_ROOT", "").strip()
-    if forenshield_root:
-        root = Path(forenshield_root)
-        # Typical welabs layout: FORENSHIELD_AI_ROOT=.../forenShield-ai/deepfake
-        candidates.append(root.parent / "config" / "env.local")
-        candidates.append(root / "config" / "env.local")
-    for env_path in candidates:
-        if not env_path.is_file():
-            continue
-        try:
-            from dotenv import load_dotenv
+_AWS_PROFILE_KEYS = frozenset({"AWS_PROFILE", "AWS_DEFAULT_PROFILE"})
 
-            load_dotenv(env_path, override=False)
+
+def _load_one_dotenv(env_path: Path, *, override: bool = False, skip_aws_profile: bool = False) -> None:
+    if not env_path.is_file():
+        return
+    try:
+        from dotenv import load_dotenv
+
+        if not skip_aws_profile:
+            load_dotenv(env_path, override=override)
             return
-        except ImportError:
-            pass
+        # env.local may set AWS_PROFILE for laptops; GPU uses IAM/env credentials.
         for line in env_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[7:].strip()
+            if "=" not in line:
                 continue
             key, _, value = line.partition("=")
             key = key.strip()
             value = value.strip().strip("'\"")
-            if key and key not in os.environ:
+            if not key or key in _AWS_PROFILE_KEYS:
+                continue
+            if override or key not in os.environ:
                 os.environ[key] = value
         return
+    except ImportError:
+        pass
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip("'\"")
+        if not key:
+            continue
+        if skip_aws_profile and key in _AWS_PROFILE_KEYS:
+            continue
+        if override or key not in os.environ:
+            os.environ[key] = value
+
+
+def _forenshield_repo_root() -> Path | None:
+    raw = os.getenv("FORENSHIELD_AI_ROOT", "").strip()
+    if raw:
+        root = Path(raw).expanduser()
+        return root.parent if root.name == "deepfake" else root
+    default = Path.home() / "forenShield-ai"
+    return default if default.is_dir() else None
+
+
+def _load_dotenv() -> None:
+    """Load welabs env files; prefer forenShield-ai/gpu_worker/.env over repo-local .env."""
+    repo_env = Path(__file__).resolve().parent / ".env"
+    foren_root = _forenshield_repo_root()
+
+    paths: list[Path] = []
+    if foren_root is not None:
+        foren_worker = foren_root / "gpu_worker" / ".env"
+        if foren_worker.is_file():
+            paths.append(foren_worker)
+        for env_local in (
+            foren_root / "config" / "env.local",
+            foren_root.parent / "config" / "env.local",
+        ):
+            if env_local.is_file():
+                paths.append(env_local)
+
+    # Repo-local .env only when welabs layout env is missing (dev laptops).
+    if not paths and repo_env.is_file():
+        paths.append(repo_env)
+
+    for env_path in paths:
+        _load_one_dotenv(
+            env_path,
+            override=False,
+            skip_aws_profile=env_path.name == "env.local",
+        )
+
+    # Gateway/overlay on welabs GPU must not inherit a missing ~/.aws profile name.
+    os.environ.pop("AWS_PROFILE", None)
+    os.environ.pop("AWS_DEFAULT_PROFILE", None)
 
 
 def _env(name: str, default: str = "") -> str:

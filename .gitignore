@@ -1,4 +1,4 @@
-.venv/
+﻿.venv/
 .env
 .env.*
 env.local
@@ -9,3 +9,10 @@ __pycache__/
 .idea/
 .vscode/
 .DS_Store
+.pytest_cache/
+
+# Large local/benchmark artifacts (not for GitHub)
+data/
+*.mp4
+*.webm
+docs/notebooks/data/

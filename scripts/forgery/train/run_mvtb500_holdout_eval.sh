@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mvtb 500 hold-out eval — NO retrain, NO re-tune on 500 (locked thr from mvtb200).
+# mvtb 500 hold-out eval ??NO retrain, NO re-tune on 500 (locked thr from mvtb200).
 #
 # Prereq: build hold-out folder first (prepare_mvtb_holdout_benchmark.py).
 #
@@ -46,7 +46,7 @@ python3 scripts/infer/spatial_mvtamperbench_benchmark.py \
 PRED="results/infer/${RUN_ID}/predictions.json"
 
 echo "[2/3] locked thr metrics @${LOCKED_THR} (do NOT gate-sweep on 500 for adoption)"
-python3 scripts/train/spatial_benchmark_calibrate_from_predictions.py \
+python3 scripts/infer/spatial_benchmark_calibrate_from_predictions.py \
   --predictions "$PRED" \
   --threshold "$LOCKED_THR" \
   --weights "$CKPT" \

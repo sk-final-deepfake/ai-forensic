@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S2 line — R5 recipe (recall BEST_KEY, epoch 8) in isolated S-line namespace
+# S2 line ??R5 recipe (recall BEST_KEY, epoch 8) in isolated S-line namespace
 #
 # Train:  forgery-gmflow-train-400 | Test: csvted200 + mvtb200 hold-out
 # Recipe: same as R5 (skip-OOW + oversample x3 + tampered_pixel_recall)
@@ -108,7 +108,7 @@ PY
     TRAIN.END_EPOCH "$END_EPOCH" \
     WORKERS "$WORKERS"
 
-  echo "[4/7] merge → S2 dev ckpt"
+  echo "[4/7] merge ??S2 dev ckpt"
   python3 scripts/train/merge_trufor_infer_checkpoint.py \
     --base "$PRETRAINED" \
     --tuned "vendor/TruFor/TruFor_train_test/weights/${EXP_NAME}/best.pth.tar" \
@@ -141,7 +141,7 @@ python3 scripts/infer/sweep_spatial_benchmark_threshold.py \
   --predictions "$MVTB_PRED" \
   --step 0.01 || true
 
-MVTB_CALIB_OUT="$(python3 scripts/train/spatial_benchmark_calibrate_from_predictions.py \
+MVTB_CALIB_OUT="$(python3 scripts/infer/spatial_benchmark_calibrate_from_predictions.py \
   --predictions "$MVTB_PRED" \
   --weights "$CKPT_DEV" \
   --gate \
@@ -154,7 +154,7 @@ echo "$MVTB_CALIB_OUT"
 MVTB_CAL_THR="$(echo "$MVTB_CALIB_OUT" | sed -n 's/^gate thr=\([0-9.]*\).*/\1/p' | head -1)"
 if [[ -z "$MVTB_CAL_THR" ]]; then
   MVTB_CAL_THR="$INFER_THRESHOLD"
-  python3 scripts/train/spatial_benchmark_calibrate_from_predictions.py \
+  python3 scripts/infer/spatial_benchmark_calibrate_from_predictions.py \
     --predictions "$MVTB_PRED" \
     --threshold "$MVTB_CAL_THR" \
     --weights "$CKPT_DEV" \
@@ -201,7 +201,7 @@ if csvted_pred.exists():
     if best:
         csvted_thr, csvted_conf = best[1], best[2]
         subprocess.run([
-            sys.executable, "scripts/train/spatial_benchmark_calibrate_from_predictions.py",
+            sys.executable, "scripts/infer/spatial_benchmark_calibrate_from_predictions.py",
             "--predictions", str(csvted_pred), "--threshold", str(csvted_thr),
             "--weights", ckpt, "--note", "S2: csvted FP<=11 reference",
         ], check=True)

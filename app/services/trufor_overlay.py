@@ -126,11 +126,13 @@ def pick_localized_bboxes(
     max_boxes: int = 1,
     max_area_ratio: float = 0.35,
     contain_overlap: float = 0.55,
+    min_score: float = 0.6,
 ) -> list[TamperBBox]:
     """Prefer compact localization peaks; drop broad parent blobs (display/API only).
 
-    Among compact boxes (area <= max_area_ratio) the highest local map score wins,
-    so a tiny low-score noise blob does not beat the real chest/face peak.
+    Gate is per-box map score (not frame DET): weak blobs are dropped even when the
+    frame DET is high, and strong blobs still show when frame DET is low.
+    Among compact boxes (area <= max_area_ratio) the highest local map score wins.
     """
     if not boxes or frame_w <= 0 or frame_h <= 0:
         return []
@@ -140,6 +142,8 @@ def pick_localized_bboxes(
 
     picked: list[TamperBBox] = []
     for box in sorted_boxes:
+        if float(box.score) < float(min_score):
+            continue
         area = _bbox_area(box)
         if area <= 0:
             continue

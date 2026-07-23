@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Branch B: continue-FT from VideoCoF-v2 → mvtb spatial
+# Branch B: continue-FT from VideoCoF-v2 ??mvtb spatial
 #
 # Init:  videocof-v2 best (adopted)
 # Train: forgery-gmflow-train-400 (or MVTB_1K if present)
@@ -106,7 +106,7 @@ if [[ "$SKIP_TRAIN" != "1" ]]; then
     TRAIN.END_EPOCH "$END_EPOCH" \
     WORKERS "$WORKERS"
 
-  echo "[4/6] merge → $CKPT_DEV"
+  echo "[4/6] merge ??$CKPT_DEV"
   mkdir -p "$(dirname "$CKPT_DEV")"
   # Prefer merging onto VideoCoF init (domain prior); fallback baseline
   MERGE_BASE="$PRETRAINED"
@@ -136,8 +136,8 @@ python3 scripts/infer/sweep_spatial_benchmark_threshold.py \
   --predictions "$MVTB_PRED" \
   --step 0.01 || true
 
-if [[ -f scripts/train/spatial_benchmark_calibrate_from_predictions.py ]]; then
-  python3 scripts/train/spatial_benchmark_calibrate_from_predictions.py \
+if [[ -f scripts/infer/spatial_benchmark_calibrate_from_predictions.py ]]; then
+  python3 scripts/infer/spatial_benchmark_calibrate_from_predictions.py \
     --predictions "$MVTB_PRED" \
     --min-tp "$MVTB_GATE_MIN_TP" \
     --max-fp "$MVTB_GATE_MAX_FP" \

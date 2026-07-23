@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optical-flow benchmark (RAFT / GMFlow / PWC-Net) on real + fake video folders."""
+"""Optical-flow benchmark (RAFT / GMFlow) on real + fake video folders."""
 from __future__ import annotations
 
 import argparse
@@ -11,7 +11,7 @@ from pathlib import Path
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from optical_flow_backends import GmflowBackend, PwcnetBackend, RaftBackend
+from optical_flow_backends import GmflowBackend, RaftBackend
 from optical_flow_common import aggregate_pair_stats, sample_frame_pairs
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
@@ -21,7 +21,6 @@ import s3_deepfake_paths as s3p
 BACKENDS = {
     "raft": RaftBackend,
     "gmflow": GmflowBackend,
-    "pwcnet": PwcnetBackend,
 }
 
 
@@ -137,8 +136,8 @@ def main() -> None:
     parser.add_argument("--run-id", default=None)
     parser.add_argument(
         "--models",
-        default="raft,gmflow,pwcnet",
-        help="comma-separated: raft,gmflow,pwcnet",
+        default="raft,gmflow",
+        help="comma-separated: raft,gmflow",
     )
     parser.add_argument("--max-pairs", type=int, default=8, help="frame pairs per video")
     args = parser.parse_args()

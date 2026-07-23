@@ -4,11 +4,8 @@ ForenShield AI의 Python FastAPI 기반 AI 서버이다.
 
 현재 서버는 Spring Boot 백엔드 연동 테스트를 위한 Mock 분석 API를 제공한다.
 
-김민희 AI 서버 작업 정리는 아래 문서에 정리되어 있다.
-
-```text
-docs/KIMMINHEE_AI_SERVER_WORK_SUMMARY.md
-```
+GPU worker·배포·레인 문서는 [`docs/README.md`](docs/README.md) 목차를 본다.  
+빠르게: [ops/GPU_WORKER_GUIDE](docs/ops/GPU_WORKER_GUIDE.md) · [overview/MODEL_LANES](docs/overview/MODEL_LANES.md)
 
 ## 실행 방법
 

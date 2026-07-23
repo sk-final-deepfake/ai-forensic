@@ -116,7 +116,7 @@ python3 scripts/infer/sweep_spatial_benchmark_threshold.py \
   --predictions "$MVTB_PRED" \
   --step 0.01 || true
 
-MVTB_CALIB_OUT="$(python3 scripts/train/spatial_benchmark_calibrate_from_predictions.py \
+MVTB_CALIB_OUT="$(python3 scripts/infer/spatial_benchmark_calibrate_from_predictions.py \
   --predictions "$MVTB_PRED" \
   --weights "$CKPT_DEV" \
   --gate \
@@ -130,7 +130,7 @@ MVTB_CAL_THR="$(echo "$MVTB_CALIB_OUT" | sed -n 's/^gate thr=\([0-9.]*\).*/\1/p'
 if [[ -z "$MVTB_CAL_THR" ]]; then
   echo "WARN: mvtb gate not satisfied — keeping @${INFER_THRESHOLD} metrics only"
   MVTB_CAL_THR="$INFER_THRESHOLD"
-  python3 scripts/train/spatial_benchmark_calibrate_from_predictions.py \
+  python3 scripts/infer/spatial_benchmark_calibrate_from_predictions.py \
     --predictions "$MVTB_PRED" \
     --threshold "$MVTB_CAL_THR" \
     --weights "$CKPT_DEV" \
@@ -179,7 +179,7 @@ if csvted_pred.exists():
         from pathlib import Path as P
         import subprocess, sys
         subprocess.run([
-            sys.executable, "scripts/train/spatial_benchmark_calibrate_from_predictions.py",
+            sys.executable, "scripts/infer/spatial_benchmark_calibrate_from_predictions.py",
             "--predictions", str(csvted_pred),
             "--threshold", str(csvted_thr),
             "--weights", ckpt,

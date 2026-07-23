@@ -37,9 +37,11 @@ def main() -> None:
     for old in PATTERNS:
         if old in text:
             # replace load line + following epoch print as one block if possible
-            start = text.find("print('=> loading model from {}".format(model_state_file))")
+            needle_single = "print('=> loading model from {}'.format(model_state_file))"
+            needle_double = 'print("=> loading model from {}".format(model_state_file))'
+            start = text.find(needle_single)
             if start == -1:
-                start = text.find('print("=> loading model from {}'.format(model_state_file))')
+                start = text.find(needle_double)
             end_marker = 'print("Epoch: {}".format(checkpoint[\'epoch\']))'
             end = text.find(end_marker)
             if start != -1 and end != -1:

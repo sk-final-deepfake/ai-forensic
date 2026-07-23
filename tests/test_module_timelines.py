@@ -17,7 +17,7 @@ from app.services.video_deepfake_analyzer import build_response_from_modules
 
 
 AI_ROOT = Path(__file__).resolve().parents[1]
-FUSION_CONFIG = AI_ROOT / "config" / "fusion_v1_tuned.json"
+FUSION_CONFIG = AI_ROOT / "config" / "test" / "fusion_v1_tuned.json"
 SAMPLE_VIDEO = AI_ROOT / "data" / "test" / "video" / "youtube-fresh" / "fake" / "ai_0wJezYHWA1c.mp4"
 XCEPTION_JSON = (
     AI_ROOT

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# F16 line — R5 recipe + 16 frames/video (prepare + infer aligned)
+# F16 line ??R5 recipe + 16 frames/video (prepare + infer aligned)
 #
 # Same training recipe as R5 (recall BEST_KEY, skip-OOW, oversample x3, epoch 8).
 # Only change vs R5: --frames-per-video 16 and infer --num-frames 16.
@@ -87,7 +87,7 @@ if [[ "$SKIP_TRAIN" != "1" ]]; then
     TRAIN.END_EPOCH "$END_EPOCH" \
     WORKERS "$WORKERS"
 
-  echo "[4/7] merge → dev ckpt"
+  echo "[4/7] merge ??dev ckpt"
   python3 scripts/train/merge_trufor_infer_checkpoint.py \
     --base "$PRETRAINED" \
     --tuned "vendor/TruFor/TruFor_train_test/weights/${EXP_NAME}/best.pth.tar" \
@@ -115,12 +115,12 @@ python3 scripts/infer/spatial_mvtamperbench_benchmark.py \
   --trufor-weights "$CKPT_DEV" \
   --run-id "$CSVTED_RUN_ID"
 
-echo "[6/7] Phase 0 calibration — mvtb gate TP>=${MVTB_GATE_MIN_TP} FP<=${MVTB_GATE_MAX_FP}"
+echo "[6/7] Phase 0 calibration ??mvtb gate TP>=${MVTB_GATE_MIN_TP} FP<=${MVTB_GATE_MAX_FP}"
 python3 scripts/infer/sweep_spatial_benchmark_threshold.py \
   --predictions "$MVTB_PRED" \
   --step 0.01 || true
 
-MVTB_CALIB_OUT="$(python3 scripts/train/spatial_benchmark_calibrate_from_predictions.py \
+MVTB_CALIB_OUT="$(python3 scripts/infer/spatial_benchmark_calibrate_from_predictions.py \
   --predictions "$MVTB_PRED" \
   --weights "$CKPT_DEV" \
   --gate \
@@ -132,9 +132,9 @@ MVTB_CALIB_OUT="$(python3 scripts/train/spatial_benchmark_calibrate_from_predict
 echo "$MVTB_CALIB_OUT"
 MVTB_CAL_THR="$(echo "$MVTB_CALIB_OUT" | sed -n 's/^gate thr=\([0-9.]*\).*/\1/p' | head -1)"
 if [[ -z "$MVTB_CAL_THR" ]]; then
-  echo "WARN: mvtb gate not satisfied — keeping @${INFER_THRESHOLD} metrics only"
+  echo "WARN: mvtb gate not satisfied ??keeping @${INFER_THRESHOLD} metrics only"
   MVTB_CAL_THR="$INFER_THRESHOLD"
-  python3 scripts/train/spatial_benchmark_calibrate_from_predictions.py \
+  python3 scripts/infer/spatial_benchmark_calibrate_from_predictions.py \
     --predictions "$MVTB_PRED" \
     --threshold "$MVTB_CAL_THR" \
     --weights "$CKPT_DEV" \

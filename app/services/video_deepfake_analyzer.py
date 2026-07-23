@@ -109,7 +109,20 @@ def _try_run_forgery_spatial(
     *,
     work_dir: Path | None = None,
 ) -> ModuleInferResult | None:
-    """Best-effort TruFor on soft face-gate. Never raises."""
+    """Best-effort TruFor on soft face-gate. Never raises.
+
+    Skipped when FORGERY_ENABLED (forgery lane owns TruFor — avoids dual run).
+    """
+    import os
+
+    if os.getenv("FORGERY_ENABLED", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }:
+        logger.info("Soft TruFor skipped — FORGERY_ENABLED; defer to forgery lane")
+        return None
     try:
         from gpu_worker.config import load_config
         from gpu_worker.pipeline.module_infer import run_trufor_module

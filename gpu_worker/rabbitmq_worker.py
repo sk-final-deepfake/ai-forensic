@@ -178,8 +178,8 @@ def process_overlay_job(channel: pika.channel.Channel, cfg: WorkerConfig, body: 
         s3Region=job.s3Region,
         presignedDownloadUrl=job.presignedDownloadUrl,
     )
-    local_path = download_job_file(analysis_shim, cfg)
     try:
+        local_path = download_job_file(analysis_shim, cfg)
         with gpu_infer_lock(work_dir=cfg.work_dir, label=f"overlay_{job.overlayJobId}"):
             result = run_overlay_job(job, local_path, cfg, on_progress=report_progress)
         publish_overlay_result(channel, cfg, result)

@@ -339,16 +339,47 @@ def _video_duration_sec(video_path: Path, fps: float) -> float:
     return round(chosen, 4)
 
 
-def _sample_timestamps_sec(n: int, duration_sec: float, fps: float, frame_indices: list[int]) -> list[float]:
-    """Map each sample to a timeline position (prefer full-clip spread over idx/fps)."""
+def _uniform_sample_frame_indices(total_frames: int, num_samples: int) -> list[int]:
+    """Same linspace indices as sample_video_frames / video_frame_indices."""
+    if total_frames < 1 or num_samples < 1:
+        return []
+    if num_samples == 1:
+        return [0]
+    return [int(i) for i in np.linspace(0, max(total_frames - 1, 0), num=num_samples, dtype=int)]
+
+
+def _sample_timestamps_sec(
+    n: int,
+    duration_sec: float,
+    fps: float,
+    frame_indices: list[int],
+) -> list[float]:
+    """Map each sample to wall-clock time from its real video frame index."""
     if n <= 0:
         return []
+    if fps > 1e-6 and len(frame_indices) == n:
+        return [round(max(0, int(idx)) / fps, 4) for idx in frame_indices]
     if duration_sec > 0 and n > 1:
         return [round(i * duration_sec / (n - 1), 4) for i in range(n)]
     if n == 1:
         idx = frame_indices[0] if frame_indices else 0
-        return [round(idx / fps, 4)]
-    return [round(idx / fps, 4) for idx in frame_indices]
+        return [round(idx / fps, 4)] if fps > 1e-6 else [0.0]
+    return [0.0] * n
+
+
+def _align_frame_indices_to_timestamps(
+    timestamps: list[float],
+    frame_indices: list[int],
+    fps: float,
+) -> list[int]:
+    """Prefer real sample frame indices; only fall back to timestamp*fps."""
+    if len(frame_indices) == len(timestamps) and frame_indices:
+        # Real video indices span the clip; sample ordinals (0..N-1) do not.
+        if len(frame_indices) == 1 or max(frame_indices) > len(frame_indices) - 1:
+            return [max(0, int(idx)) for idx in frame_indices]
+    if fps <= 1e-6:
+        return list(frame_indices)
+    return [max(0, int(round(float(ts) * fps))) for ts in timestamps]
 
 
 def _aggregate(values: list[float], mode: str) -> float:
@@ -454,6 +485,7 @@ def _collect_trufor_frame_scores(
     duration_sec: float,
     fps: float,
     video_size: tuple[int, int] | None = None,
+    total_frames: int = 0,
 ) -> list[tuple[float, float, int, list[dict[str, Any]]]]:
     """Pair TruFor npz scores (+ tamper bboxes) with sampled JPEG order."""
     jpgs = sorted(
@@ -465,9 +497,13 @@ def _collect_trufor_frame_scores(
             p
             for p in trufor_out.rglob("*.npz")
             if _npz_belongs_to_stem(p.stem, video_stem)
+            or p.name.lower().startswith("frame_")
         ],
         key=lambda p: p.name.lower(),
     )
+    # Vendor layouts often nest npz as video/frame_XXX.jpg.npz without stem_f prefix.
+    if not npzs:
+        npzs = sorted(trufor_out.rglob("*.npz"), key=lambda p: p.name.lower())
 
     if not jpgs or not npzs:
         return []
@@ -482,6 +518,9 @@ def _collect_trufor_frame_scores(
         )
 
     video_w, video_h = video_size or (0, 0)
+    # sample_video_frames writes sample ordinals in names (stem_f000 / frame_000) while
+    # the true video index is linspace — use that so overlay bake lands on the same pixels.
+    true_indices = _uniform_sample_frame_indices(int(total_frames), pair_count)
 
     frame_indices: list[int] = []
     scores: list[float] = []
@@ -492,8 +531,13 @@ def _collect_trufor_frame_scores(
         val = _score_from_trufor_npz(npz)
         if val is None:
             continue
-        frame_idx = _frame_index_from_trufor_npz(jpg.stem)
-        if frame_idx is None:
+        parsed = _frame_index_from_trufor_npz(jpg.stem)
+        # Prefer linspace video index; filename ordinals (0..N-1) are not seek positions.
+        if true_indices and i < len(true_indices):
+            frame_idx = int(true_indices[i])
+        elif parsed is not None and parsed >= pair_count:
+            frame_idx = int(parsed)
+        else:
             frame_idx = i
         frame_indices.append(frame_idx)
         scores.append(float(val))
@@ -503,8 +547,9 @@ def _collect_trufor_frame_scores(
         return []
 
     timestamps = _sample_timestamps_sec(len(scores), duration_sec, fps, frame_indices)
+    aligned_indices = list(frame_indices)
     return [
-        (timestamps[i], scores[i], frame_indices[i], bbox_rows[i])
+        (timestamps[i], scores[i], aligned_indices[i], bbox_rows[i])
         for i in range(len(scores))
     ]
 
@@ -522,7 +567,7 @@ def _bboxes_from_trufor_pair(
         repo = Path(__file__).resolve().parents[2]  # .../ai-forensic
         if str(repo) not in sys.path:
             sys.path.insert(0, str(repo))
-        from app.services.trufor_overlay import bboxes_from_npz, pick_localized_bboxes
+        from app.services.trufor_overlay import bboxes_from_npz
     except Exception:
         logger.warning("TruFor bbox import failed; overlays will lack boxes", exc_info=True)
         return []
@@ -534,9 +579,11 @@ def _bboxes_from_trufor_pair(
     target_w = video_w if video_w > 0 else jw
     target_h = video_h if video_h > 0 else jh
     try:
+        # Dump parity (*_raw.jpg): keep every connected-component blob (max 6).
+        # Do NOT run pick_localized here — that collapses to 1 tight box and is
+        # only for the separate *_picked.jpg debug view.
         boxes, _ = bboxes_from_npz(npz_path, jw, jh)
-        # Keep all compact blobs (score-sorted); FE draws the top one as primary.
-        boxes = pick_localized_bboxes(boxes, jw, jh, max_boxes=5)
+        boxes = list(boxes)[:6]
     except Exception:
         logger.warning("TruFor bbox extract failed for %s", npz_path, exc_info=True)
         return []
@@ -626,8 +673,13 @@ def infer_trufor_spatial(video_path: Path, work_dir: Path, cfg: ForgeryInferConf
             cfg.gpu,
         )
 
-    # Prefer sampled JPEG order; spread timestamps across full clip duration.
+    # Prefer sampled JPEG order; place boxes on the same linspace video frames.
     video_w, video_h = _video_size(video_path)
+    total_frames = 0
+    cap = cv2.VideoCapture(str(video_path))
+    if cap.isOpened():
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        cap.release()
     frame_scores = _collect_trufor_frame_scores(
         saved,
         trufor_out,
@@ -635,6 +687,7 @@ def infer_trufor_spatial(video_path: Path, work_dir: Path, cfg: ForgeryInferConf
         duration_sec=duration_sec,
         fps=fps,
         video_size=(video_w, video_h),
+        total_frames=total_frames,
     )
 
     if not frame_scores:

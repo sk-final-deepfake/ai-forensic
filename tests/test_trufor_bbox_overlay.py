@@ -45,6 +45,25 @@ class TruForBBoxOverlayTests(unittest.TestCase):
         self.assertIn(3, mapped)
         self.assertEqual(mapped[3][0]["w"], 10)
 
+    def test_frame_risks_to_bboxes_prefers_timestamp_when_frame_index_is_ordinal(self) -> None:
+        from app.services.module_overlays import _resolve_overlay_frame_index
+
+        row = {
+            "frameIndex": 2,  # sample ordinal (wrong for bake)
+            "timestampSec": 10.0,
+            "bboxes": [{"x": 1, "y": 2, "w": 10, "h": 12, "score": 0.9}],
+        }
+        self.assertEqual(_resolve_overlay_frame_index(row, fps=25.0), 250)
+        mapped = _frame_risks_to_bboxes([row], fps=25.0)
+        self.assertIn(250, mapped)
+        self.assertNotIn(2, mapped)
+
+    def test_resolve_prefers_real_video_frame_index(self) -> None:
+        from app.services.module_overlays import _resolve_overlay_frame_index
+
+        row = {"frameIndex": 41, "timestampSec": 1.708}
+        self.assertEqual(_resolve_overlay_frame_index(row, fps=24.0), 41)
+
     def test_overlay_bbox_style_from_npz(self) -> None:
         from app.services.trufor_overlay import overlay_trufor_on_frame
 

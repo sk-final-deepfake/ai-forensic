@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -305,7 +306,23 @@ def _to_per_frame_face_score_items(scores: list[dict[str, Any]]) -> list[PerFram
     return items
 
 
-def _forgery_continuation_note(forgery: ModuleRunResult | None) -> str:
+def _forgery_lane_enabled() -> bool:
+    """When true, soft TruFor in response_builder is skipped — enrich_with_forgery owns TruFor."""
+    return os.getenv("FORGERY_ENABLED", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
+def _forgery_continuation_note(
+    forgery: ModuleRunResult | None,
+    *,
+    deferred_to_lane: bool = False,
+) -> str:
+    if deferred_to_lane:
+        return "위변조(TruFor)는 forgery lane에서 이어서 수행합니다."
     if forgery is None:
         return "위변조(TruFor)는 가중치 또는 vendor가 없어 생략되었습니다."
     status = str((forgery.raw or {}).get("status", ""))
@@ -329,9 +346,12 @@ def _soft_inconclusive_response(
     frames_sampled: int | None = None,
     message: str | None = None,
     forgery: ModuleRunResult | None = None,
+    forgery_deferred_to_lane: bool = False,
 ) -> AnalysisResponseMessage:
     detail = f" sampled_frames={frames_sampled}" if frames_sampled is not None else ""
-    forgery_note = _forgery_continuation_note(forgery)
+    forgery_note = _forgery_continuation_note(
+        forgery, deferred_to_lane=forgery_deferred_to_lane
+    )
     defaults = {
         "NO_HUMAN_FACE": (
             "사람 얼굴이 검출되지 않아 딥페이크 판별을 수행할 수 없습니다. "
@@ -504,7 +524,24 @@ def build_analysis_response(
     cnn_error = _cnn_status_to_error_code(cnn_status)
     if cnn_error is not None or (cnn.raw or {}).get("fake_score") is None:
         breakdown = (cnn.raw or {}).get("score_breakdown") or {}
-        # Soft advisory only — still run TruFor spatial best-effort in the same response.
+        # Face-gate: when forgery lane is on, skip soft TruFor — enrich_with_forgery runs
+        # train-ckpt TruFor so no-face videos still get forgery-only results without dual run.
+        if _forgery_lane_enabled():
+            _report_progress(on_progress, 95, "얼굴 게이트 — 위변조는 forgery lane에서 계속")
+            logger.info(
+                "Soft face-gate → defer to forgery lane: evidenceId=%s errorCode=%s",
+                evidence_id,
+                cnn_error or "NO_HUMAN_FACE",
+            )
+            return _soft_inconclusive_response(
+                analysis_request_id=analysis_request_id,
+                evidence_id=evidence_id,
+                error_code=cnn_error or "NO_HUMAN_FACE",
+                modules=["cnn"],
+                frames_sampled=breakdown.get("frames_sampled"),
+                forgery=None,
+                forgery_deferred_to_lane=True,
+            )
         _report_progress(on_progress, 84, "위변조(TruFor) 공간 분석 중")
         forgery = run_trufor_module(
             video_path,
@@ -574,43 +611,12 @@ def build_analysis_response(
         )
     _report_progress(on_progress, 82, "위험도 융합 완료")
 
-    _report_progress(on_progress, 84, "위변조(TruFor) 공간 분석 중")
-    forgery = run_trufor_module(
-        video_path,
-        cfg,
-        fps=fps,
-        work_dir=cfg.work_dir / "trufor" / f"{evidence_id}_{analysis_request_id}",
-    )
-    _report_progress(on_progress, 90, "대표 프레임 생성 중")
-    forgery_note = _forgery_continuation_note(forgery)
-
     model_scores = _build_model_scores(fusion, modules, fusion_config)
     module_timelines = _build_module_timelines(modules, fusion_config)
-    if forgery_ran_successfully(forgery):
-        model_scores.append(
-            ModelScoreItem(
-                moduleName=forgery.module,
-                detected=forgery.detected,
-                score=_safe_score(forgery.video_score),
-                modelName=forgery.model_name,
-                modelVersion=forgery.model_version,
-            )
-        )
-        module_timelines.append(
-            ModuleTimelineItem(
-                module=forgery.module,
-                modelName=forgery.model_name,
-                modelVersion=forgery.model_version,
-                videoScore=_safe_score(forgery.video_score),
-                threshold=_safe_score(forgery.threshold),
-                detected=forgery.detected,
-                frameRisks=_to_frame_risks(forgery.frame_risks) or None,
-                clipRisks=None,
-                pairRisks=None,
-                suspiciousSegments=_to_segments(forgery.suspicious_segments) or None,
-                overlayVideoUrl=None,
-            )
-        )
+    # R1: skip soft TruFor when forgery lane owns TruFor (avoids dual run / cost / score drift).
+    if _forgery_lane_enabled():
+        _report_progress(on_progress, 90, "대표 프레임 생성 중")
+        forgery_note = _forgery_continuation_note(None, deferred_to_lane=True)
         fusion = FusionResult(
             score=fusion.score,
             detected=fusion.detected,
@@ -620,6 +626,40 @@ def build_analysis_response(
             reasons=[*fusion.reasons, forgery_note],
         )
     else:
+        _report_progress(on_progress, 84, "위변조(TruFor) 공간 분석 중")
+        forgery = run_trufor_module(
+            video_path,
+            cfg,
+            fps=fps,
+            work_dir=cfg.work_dir / "trufor" / f"{evidence_id}_{analysis_request_id}",
+        )
+        _report_progress(on_progress, 90, "대표 프레임 생성 중")
+        forgery_note = _forgery_continuation_note(forgery)
+        if forgery_ran_successfully(forgery):
+            model_scores.append(
+                ModelScoreItem(
+                    moduleName=forgery.module,
+                    detected=forgery.detected,
+                    score=_safe_score(forgery.video_score),
+                    modelName=forgery.model_name,
+                    modelVersion=forgery.model_version,
+                )
+            )
+            module_timelines.append(
+                ModuleTimelineItem(
+                    module=forgery.module,
+                    modelName=forgery.model_name,
+                    modelVersion=forgery.model_version,
+                    videoScore=_safe_score(forgery.video_score),
+                    threshold=_safe_score(forgery.threshold),
+                    detected=forgery.detected,
+                    frameRisks=_to_frame_risks(forgery.frame_risks) or None,
+                    clipRisks=None,
+                    pairRisks=None,
+                    suspiciousSegments=_to_segments(forgery.suspicious_segments) or None,
+                    overlayVideoUrl=None,
+                )
+            )
         fusion = FusionResult(
             score=fusion.score,
             detected=fusion.detected,

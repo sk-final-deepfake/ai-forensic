@@ -329,6 +329,9 @@ def _transcode_overlay_to_h264(source: Path, dest: Path) -> bool:
         os.getenv("AI_VISUALIZATION_OVERLAY_CRF", "23"),
         "-pix_fmt",
         "yuv420p",
+        # Keep 1:1 frames from OpenCV writer so overlay timeline matches the source.
+        "-fps_mode",
+        "passthrough",
         "-movflags",
         "+faststart",
         "-an",

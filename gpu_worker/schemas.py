@@ -148,7 +148,7 @@ class AnalysisVideoResultItem(BaseModel):
 
 
 class AnalysisResponseMessage(BaseModel):
-    """docs/integrations/ai-json.md — BE AnalysisResponseMessage."""
+    """backend docs/integrations/ai-json.md — BE AnalysisResponseMessage."""
 
     analysisRequestId: int
     evidenceId: int

@@ -12,7 +12,8 @@ __pycache__/
 .pytest_cache/
 
 # Large local/benchmark artifacts (not for GitHub)
-data/
+# Root dataset tree only — do NOT ignore scripts/**/data/ helpers
+/data/
 *.mp4
 *.webm
 docs/notebooks/data/

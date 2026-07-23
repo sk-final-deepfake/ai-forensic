@@ -43,7 +43,7 @@ class FaceQualityAndTemporalGateTests(unittest.TestCase):
 
         config_path = AI_ROOT / "config" / "fusion_v4_ts_gated.json"
         if not config_path.is_file():
-            config_path = AI_ROOT / "config" / "fusion_v1_tuned.json"
+            config_path = AI_ROOT / "config" / "test" / "fusion_v1_tuned.json"
         if not config_path.is_file():
             self.skipTest("fusion config missing")
         config = load_fusion_config(config_path)
@@ -95,7 +95,7 @@ class FaceQualityAndTemporalGateTests(unittest.TestCase):
 
         config_path = AI_ROOT / "config" / "fusion_v4_ts_gated.json"
         if not config_path.is_file():
-            config_path = AI_ROOT / "config" / "fusion_v1_tuned.json"
+            config_path = AI_ROOT / "config" / "test" / "fusion_v1_tuned.json"
         if not config_path.is_file():
             self.skipTest("fusion config missing")
         config = load_fusion_config(config_path)

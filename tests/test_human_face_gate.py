@@ -44,7 +44,7 @@ class HumanFaceGateTests(unittest.TestCase):
     def test_analyzer_returns_no_human_face(self) -> None:
         from app.services.late_fusion import load_fusion_config
 
-        config_path = AI_ROOT / "config" / "fusion_v1_tuned.json"
+        config_path = AI_ROOT / "config" / "test" / "fusion_v1_tuned.json"
         if not config_path.is_file():
             self.skipTest("fusion config missing")
         config = load_fusion_config(config_path)
@@ -102,7 +102,7 @@ class HumanFaceGateTests(unittest.TestCase):
     def test_analyzer_soft_gate_includes_forgery_when_provided(self) -> None:
         from app.services.late_fusion import load_fusion_config
 
-        config_path = AI_ROOT / "config" / "fusion_v1_tuned.json"
+        config_path = AI_ROOT / "config" / "test" / "fusion_v1_tuned.json"
         if not config_path.is_file():
             self.skipTest("fusion config missing")
         config = load_fusion_config(config_path)

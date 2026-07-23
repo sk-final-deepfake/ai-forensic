@@ -7,21 +7,33 @@ from gpu_worker.config import WorkerConfig
 
 
 def setup_script_paths(cfg: WorkerConfig) -> Path:
-    """deepfake infer + project eval scripts를 import path에 추가."""
-    # FORENSHIELD_AI_ROOT(deepfake) 쪽 infer에 backends/ 가 있음. DEEPFAKE_ROOT(git)는 코드만.
-    candidates = [
+    """Prefer ai-forensic (DEEPFAKE_ROOT) infer scripts over legacy FORENSHIELD tree."""
+    legacy = [
         cfg.project_root / "scripts" / "infer",
+        cfg.project_root / "scripts" / "forgery" / "infer",
         cfg.project_root / "scripts" / "eval",
         cfg.project_root.parent / "scripts" / "infer",
         cfg.project_root.parent / "scripts" / "eval",
-        cfg.deepfake_root / "scripts" / "infer",
-        cfg.deepfake_root / "scripts" / "eval",
     ]
-    for path in candidates:
+    primary_infer = cfg.deepfake_root / "scripts" / "infer"
+    primary_eval = cfg.deepfake_root / "scripts" / "eval"
+    # Forgery lane helpers live under repo scripts/forgery/infer (git layout).
+    primary_forgery = cfg.deepfake_root / "scripts" / "forgery" / "infer"
+
+    for path in legacy:
         if path.is_dir():
             resolved = str(path.resolve())
             if resolved not in sys.path:
                 sys.path.insert(0, resolved)
+
+    for path in (primary_eval, primary_forgery, primary_infer):
+        if not path.is_dir():
+            continue
+        resolved = str(path.resolve())
+        if resolved in sys.path:
+            sys.path.remove(resolved)
+        sys.path.insert(0, resolved)
+
     return cfg.deepfake_root
 
 

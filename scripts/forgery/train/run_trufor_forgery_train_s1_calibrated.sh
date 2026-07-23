@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S1 line — TruFor spatial fine-tune + fixed 400 eval + mvtb calibration
+# S1 line ??TruFor spatial fine-tune + fixed 400 eval + mvtb calibration
 # Isolated from baseline models/test and R-line (R1~R5) paths.
 #
 # Train:  forgery-gmflow-train-400 (400 video, test 400 excluded by manifest)
@@ -38,7 +38,7 @@ MVTB_GATE_MIN_TP="${MVTB_GATE_MIN_TP:-63}"
 MVTB_GATE_MAX_FP="${MVTB_GATE_MAX_FP:-51}"
 CALIB_STEP="${CALIB_STEP:-0.005}"
 
-# S1 namespace — do not write into R-line or models/test
+# S1 namespace ??do not write into R-line or models/test
 PRETRAINED="${PRETRAINED:-${ROOT}/models/test/spatial/trufor/v1.0.0/trufor.pth.tar}"
 CKPT_DEV="models/dev/spatial/trufor-s1/v1.0.0/${EXP_NAME}/trufor.pth.tar"
 RESULTS_TAG="s1-exp"
@@ -103,7 +103,7 @@ if [[ "$SKIP_TRAIN" != "1" ]]; then
     TRAIN.END_EPOCH "$END_EPOCH" \
     WORKERS "$WORKERS"
 
-  echo "[4/7] merge → S1 dev ckpt"
+  echo "[4/7] merge ??S1 dev ckpt"
   python3 scripts/train/merge_trufor_infer_checkpoint.py \
     --base "$PRETRAINED" \
     --tuned "vendor/TruFor/TruFor_train_test/weights/${EXP_NAME}/best.pth.tar" \
@@ -136,7 +136,7 @@ python3 scripts/infer/sweep_spatial_benchmark_threshold.py \
   --predictions "$MVTB_PRED" \
   --step 0.01 || true
 
-MVTB_CALIB_OUT="$(python3 scripts/train/spatial_benchmark_calibrate_from_predictions.py \
+MVTB_CALIB_OUT="$(python3 scripts/infer/spatial_benchmark_calibrate_from_predictions.py \
   --predictions "$MVTB_PRED" \
   --weights "$CKPT_DEV" \
   --gate \
@@ -148,9 +148,9 @@ MVTB_CALIB_OUT="$(python3 scripts/train/spatial_benchmark_calibrate_from_predict
 echo "$MVTB_CALIB_OUT"
 MVTB_CAL_THR="$(echo "$MVTB_CALIB_OUT" | sed -n 's/^gate thr=\([0-9.]*\).*/\1/p' | head -1)"
 if [[ -z "$MVTB_CAL_THR" ]]; then
-  echo "WARN: mvtb gate not satisfied — fallback @${INFER_THRESHOLD}"
+  echo "WARN: mvtb gate not satisfied ??fallback @${INFER_THRESHOLD}"
   MVTB_CAL_THR="$INFER_THRESHOLD"
-  python3 scripts/train/spatial_benchmark_calibrate_from_predictions.py \
+  python3 scripts/infer/spatial_benchmark_calibrate_from_predictions.py \
     --predictions "$MVTB_PRED" \
     --threshold "$MVTB_CAL_THR" \
     --weights "$CKPT_DEV" \
@@ -205,7 +205,7 @@ if csvted_pred.exists():
         csvted_conf = best[2]
         subprocess.run([
             sys.executable,
-            "scripts/train/spatial_benchmark_calibrate_from_predictions.py",
+            "scripts/infer/spatial_benchmark_calibrate_from_predictions.py",
             "--predictions", str(csvted_pred),
             "--threshold", str(csvted_thr),
             "--weights", ckpt,

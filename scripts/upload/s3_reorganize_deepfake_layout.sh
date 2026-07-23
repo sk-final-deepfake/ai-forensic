@@ -7,7 +7,7 @@
 #   APPLY=1 PHASE=evidence bash scripts/upload/s3_reorganize_deepfake_layout.sh
 #   APPLY=1 PHASE=models bash scripts/upload/s3_reorganize_deepfake_layout.sh
 #
-# Doc: docs/S3_DEEPFAKE_FOLDER_LAYOUT.md
+# Doc: docs/ops/S3_DEEPFAKE_FOLDER_LAYOUT.md
 set -euo pipefail
 
 EVIDENCE_BUCKET="${S3_EVIDENCE_BUCKET:-forenshield-evidence-877044078824}"
@@ -49,7 +49,7 @@ upload_readme() {
   cat >"${tmp}" <<EOF
 # ForenShield deepfake S3 layout
 
-See ai-forensic/docs/S3_DEEPFAKE_FOLDER_LAYOUT.md
+See ai-forensic/docs/ops/S3_DEEPFAKE_FOLDER_LAYOUT.md
 
 - datasets/train   : training manifests & clips
 - datasets/golden  : regression golden set

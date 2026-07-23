@@ -103,6 +103,6 @@ cat <<EOF
   export FORENSHIELD_TRACK=forgery
   export FORENSHIELD_AI_ROOT=${ROOT}/forgery
 
-문서: ai-forensic/docs/FORENSHIELD_AI_GPU_WORKSTATION.md
+문서: ai-forensic/docs/ops/FORENSHIELD_AI_GPU_WORKSTATION.md
 ==============================================
 EOF

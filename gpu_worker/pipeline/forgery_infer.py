@@ -128,9 +128,11 @@ def _resolve_path(env_value: str, default: Path) -> Path:
 
 
 def _setup_forgery_imports(repo_root: Path, forgery_root: Path) -> None:
+    # Prefer GPU layout (forgery/scripts/infer), then git layout (scripts/forgery/infer).
     for cand in (
         forgery_root / "scripts" / "infer",
         repo_root / "forgery" / "scripts" / "infer",
+        repo_root / "scripts" / "forgery" / "infer",
         repo_root / "scripts" / "infer",
     ):
         if cand.is_dir() and str(cand) not in sys.path:

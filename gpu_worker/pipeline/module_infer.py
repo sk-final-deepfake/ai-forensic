@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import logging
 import math
 import shutil
@@ -227,11 +229,9 @@ def run_timesformer_module(video_path: Path, cfg: WorkerConfig, *, threshold: fl
         size=CLIP_SIZE,
     )
     try:
-        result = infer_video_clip_model(
-            model,
-            video_path,
-            None,
-            device,
+        import inspect
+
+        clip_kwargs = dict(
             clip_to_tensor=clip_to_tensor,
             method="timesformer_clip_classification_outputs",
             clip_frames=CLIP_FRAMES,
@@ -240,6 +240,15 @@ def run_timesformer_module(video_path: Path, cfg: WorkerConfig, *, threshold: fl
             threshold=threshold,
             face_cropper=face_cropper,
             aggregate="max",
+        )
+        supported = inspect.signature(infer_video_clip_model).parameters
+        clip_kwargs = {k: v for k, v in clip_kwargs.items() if k in supported}
+        result = infer_video_clip_model(
+            model,
+            video_path,
+            None,
+            device,
+            **clip_kwargs,
         )
     except RuntimeError as exc:
         logger.exception("TimeSformer inference failed for %s", video_path.name)
@@ -348,18 +357,57 @@ def run_gmflow_module(video_path: Path, cfg: WorkerConfig, *, threshold: float, 
     if preferred.is_file():
         backend.weights = preferred
     backend.load()
-    infer_result = infer_video(
-        video_path,
-        backend,
-        max_pairs=8,
-        max_side=512,
-        run_id="gateway",
-        model_name="gmflow",
-        ground_truth_label=None,
-        device=device,
-    )
+
+    env_pairs = int(os.getenv("GMFLOW_MAX_PAIRS", "4"))
+    env_side = int(os.getenv("GMFLOW_MAX_SIDE", "384"))
+    attempts = []
+    for mp, ms in ((env_pairs, env_side), (4, 384), (2, 320)):
+        if (mp, ms) not in attempts:
+            attempts.append((mp, ms))
+
+    infer_result: dict = {"status": "error", "errors": [], "pair_stats": []}
+    for max_pairs, max_side in attempts:
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+        infer_result = infer_video(
+            video_path,
+            backend,
+            max_pairs=max_pairs,
+            max_side=max_side,
+            run_id="gateway",
+            model_name="gmflow",
+            ground_truth_label=None,
+            device=device,
+        )
+        if infer_result.get("status") == "ok":
+            break
+        logger.warning(
+            "GMFlow attempt failed max_pairs=%s max_side=%s status=%s errors=%s",
+            max_pairs,
+            max_side,
+            infer_result.get("status"),
+            infer_result.get("errors"),
+        )
+
     if infer_result.get("status") != "ok":
-        raise RuntimeError(f"GMFlow inference failed: status={infer_result.get('status')}")
+        errors = infer_result.get("errors") or []
+        logger.error("GMFlow inference failed after retries: errors=%s", errors)
+        return ModuleRunResult(
+            module="optical",
+            model_name="GMFlow",
+            model_version="v1.0.0",
+            video_score=0.0,
+            threshold=threshold,
+            detected=False,
+            confidence=0.0,
+            frame_risks=[],
+            clip_risks=[],
+            pair_risks=[],
+            suspicious_segments=[],
+            temporal_suspicious_segments=[],
+            optical_suspicious_segments=[],
+            raw={"status": "error", "message": f"GMFlow failed: {errors[:3]}", "errors": errors, "fake_score": None},
+        )
 
     scorer_root = cfg.project_root
     meta_path = scorer_root / "models/test/video/optical-flow/gmflow/v1.0.0/gmflow_best.meta.json"

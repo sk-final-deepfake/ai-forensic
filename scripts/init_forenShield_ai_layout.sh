@@ -5,7 +5,7 @@
 #   bash init_forenShield_ai_layout.sh
 #   FORENSHIELD_AI_ROOT=/data/forenShield-ai bash init_forenShield_ai_layout.sh
 #
-# 문서: docs/FORENSHIELD_AI_GPU_WORKSTATION.md
+# 문서: docs/ops/FORENSHIELD_AI_GPU_WORKSTATION.md
 set -euo pipefail
 
 ROOT="${FORENSHIELD_AI_ROOT:-$HOME/forenShield-ai}"
@@ -120,7 +120,7 @@ export FORENSHIELD_AI_ROOT="${HOME}/forenShield-ai/${FORENSHIELD_TRACK}"
 EOF
 
 write_if_missing "${ROOT}/config/buckets.yaml" <<'EOF'
-# S3 버킷·prefix — 상세: ai-forensic/docs/FORENSHIELD_AI_GPU_WORKSTATION.md
+# S3 버킷·prefix — 상세: ai-forensic/docs/ops/FORENSHIELD_AI_GPU_WORKSTATION.md
 buckets:
   evidence: forenshield-evidence-877044078824
   models: forenshield-models-877044078824
@@ -275,7 +275,7 @@ export FORENSHIELD_AI_ROOT="$HOME/forenShield-ai/forgery"
 
 ## 구조 상세
 
-`ai-forensic/docs/FORENSHIELD_AI_GPU_WORKSTATION.md`
+`ai-forensic/docs/ops/FORENSHIELD_AI_GPU_WORKSTATION.md`
 
 ## 디렉터리 요약
 
@@ -319,4 +319,4 @@ echo ""
 echo "    기존 flat 구조 마이그레이션:"
 echo "    bash ai-forensic/scripts/migrate_flat_to_track_layout.sh"
 echo ""
-echo "    Full doc: ai-forensic/docs/FORENSHIELD_AI_GPU_WORKSTATION.md"
+echo "    Full doc: ai-forensic/docs/ops/FORENSHIELD_AI_GPU_WORKSTATION.md"

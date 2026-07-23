@@ -2,7 +2,7 @@
 # R5 + Phase 0 calibration (Option A+B hybrid)
 #
 # B: R5 combined training (R1 BEST_KEY + R2 skip-OOW + R3 oversample + R4 epoch)
-# A: post-infer threshold sweep ??mvtb gate (TP>=63 FP<=51) ??metrics.json + calibration.json
+# A: post-infer threshold sweep → mvtb gate (TP>=63 FP<=51) → metrics.json + calibration.json
 #
 # Usage (from ~/forenShield-ai/forgery):
 #   sed -i 's/\r$//' scripts/train/run_trufor_forgery_train_r5_calibrated.sh
@@ -83,7 +83,7 @@ if [[ "$SKIP_TRAIN" != "1" ]]; then
     TRAIN.END_EPOCH "$END_EPOCH" \
     WORKERS "$WORKERS"
 
-  echo "[4/7] merge ??dev ckpt"
+  echo "[4/7] merge → dev ckpt"
   python3 scripts/train/merge_trufor_infer_checkpoint.py \
     --base "$PRETRAINED" \
     --tuned "vendor/TruFor/TruFor_train_test/weights/${EXP_NAME}/best.pth.tar" \
@@ -111,7 +111,7 @@ python3 scripts/infer/spatial_mvtamperbench_benchmark.py \
   --trufor-weights "$CKPT_DEV" \
   --run-id "$CSVTED_RUN_ID"
 
-echo "[6/7] Phase 0 calibration ??mvtb gate TP>=${MVTB_GATE_MIN_TP} FP<=${MVTB_GATE_MAX_FP}"
+echo "[6/7] Phase 0 calibration — mvtb gate TP>=${MVTB_GATE_MIN_TP} FP<=${MVTB_GATE_MAX_FP}"
 python3 scripts/infer/sweep_spatial_benchmark_threshold.py \
   --predictions "$MVTB_PRED" \
   --step 0.01 || true
@@ -128,7 +128,7 @@ MVTB_CALIB_OUT="$(python3 scripts/infer/spatial_benchmark_calibrate_from_predict
 echo "$MVTB_CALIB_OUT"
 MVTB_CAL_THR="$(echo "$MVTB_CALIB_OUT" | sed -n 's/^gate thr=\([0-9.]*\).*/\1/p' | head -1)"
 if [[ -z "$MVTB_CAL_THR" ]]; then
-  echo "WARN: mvtb gate not satisfied ??keeping @${INFER_THRESHOLD} metrics only"
+  echo "WARN: mvtb gate not satisfied — keeping @${INFER_THRESHOLD} metrics only"
   MVTB_CAL_THR="$INFER_THRESHOLD"
   python3 scripts/infer/spatial_benchmark_calibrate_from_predictions.py \
     --predictions "$MVTB_PRED" \
@@ -216,7 +216,7 @@ doc = {
             "run_id": "${CSVTED_RUN_ID}",
         },
     },
-    "doc": "docs/ai/17-TruFor-v5-?�인1-BEST_KEY-개선-?�험.md §9.19",
+    "doc": "docs/ai/17-TruFor-v5-원인1-BEST_KEY-개선-실험.md §9.19",
 }
 out = Path("${CALIB_DIR}/calibration.json")
 out.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
